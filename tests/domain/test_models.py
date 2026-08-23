@@ -13,7 +13,7 @@ def test_entity_round_trips(model_cls, fixture):
 
 def test_strict_mode_rejects_float_in_money_field():
     fixture = dict(ENTITY_FIXTURES[0][1])
-    fixture["gross_amount_paise"] = 118000.0  # a float, even a whole-numbered one, must not coerce
+    fixture["gross_paise"] = 118000.0  # a float, even a whole-numbered one, must not coerce
     with pytest.raises(ValidationError):
         Order.model_validate(fixture)
 

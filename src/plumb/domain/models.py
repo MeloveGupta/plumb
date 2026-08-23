@@ -28,7 +28,7 @@ class PlumbEntity(BaseModel):
 class Order(PlumbEntity):
     order_id: RecordKey
     seller_id: str
-    gross_amount_paise: Paise
+    gross_paise: Paise
     category: str
     placed_at_utc: str
     status: str
@@ -39,9 +39,9 @@ class OrderLine(PlumbEntity):
     line_id: RecordKey
     order_id: RecordKey
     sku: str
-    taxable_value_paise: Paise
-    gst_rate_bps: Bps
-    gst_amount_paise: Paise
+    taxable_paise: Paise
+    gst_bps: Bps
+    gst_paise: Paise
 
 
 class Intent(PlumbEntity):
@@ -106,24 +106,39 @@ class Dispute(PlumbEntity):
 
 
 class SettlementRecon(PlumbEntity):
-    entity_id: RecordKey  # points at a payment_id or transfer_id per entity_type
+    # SCHEMA-FIX (found alongside the Intent one, same audit): this model
+    # was missing its own record_key (BACKEND_SCHEMA §1.2 gives it the
+    # setl_ prefix), had entity_key misnamed entity_id, dispute_key
+    # misnamed dispute_id, and wrongly made utr nullable — that nullability
+    # belongs to bank_credit.utr (extracted from narration, can fail), not
+    # here. Razorpay's own settlement file always states its own utr; only
+    # the bank statement's narration-based extraction can fail.
+    settlement_recon_id: RecordKey
+    entity_key: RecordKey | None = None  # points at a payment_id or transfer_id per entity_type
     entity_type: str
     settlement_id: str
-    utr: str | None = None  # LLD §3.2 — sub-0.60-confidence narration is null, not quarantined
+    utr: str
     amount_paise: Paise
     fee_paise: Paise
     tax_paise: Paise
     debit_paise: Paise
     credit_paise: Paise
     settled_at_utc: str
-    dispute_id: RecordKey | None = None
+    dispute_key: RecordKey | None = None
 
 
 class BankCredit(PlumbEntity):
-    bank_ref: RecordKey
+    # SCHEMA-FIX: same audit -- was missing its own record_key (bank_
+    # prefix per BACKEND_SCHEMA §1.2); bank_ref is a separate, external
+    # bank-provided reference, not our own key format. credited_at_utc
+    # renamed to credited_on -- the SQL comment is explicit that this is a
+    # date, not a timestamp ("the bank gives no time"), which is also why
+    # it doesn't carry the _utc suffix.
+    bank_credit_id: RecordKey
+    bank_ref: str
     utr: str | None = None
     amount_paise: Paise
-    credited_at_utc: str
+    credited_on: str
     narration: str  # raw source text; UTR extraction happens downstream in ingest
 
 
@@ -135,7 +150,7 @@ class SellerRateCard(PlumbEntity):
     rate_card_id: RecordKey
     seller_id: str
     category: str
-    commission_rate_bps: Bps
-    effective_from_utc: str
-    effective_to_utc: str | None = None
+    commission_bps: Bps
+    effective_from: str
+    effective_to: str | None = None
     version: str
