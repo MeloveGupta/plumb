@@ -13,6 +13,8 @@ and the domain model boundary is where it would otherwise slip through
 unnoticed.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from plumb.domain.keys import RecordKey
@@ -58,7 +60,7 @@ class Payment(PlumbEntity):
     payment_id: RecordKey
     order_id: RecordKey
     amount_paise: Paise
-    method: str
+    method: Literal["upi", "card", "netbanking", "wallet"]  # BACKEND_SCHEMA.md §3.3
     status: str
     captured_at_utc: str
     fee_paise: Paise
