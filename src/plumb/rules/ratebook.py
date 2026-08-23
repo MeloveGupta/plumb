@@ -42,7 +42,11 @@ class RateRule:
 
 
 class RateBook:
-    VERIFIED_ON: Final[date] = date(2026, 8, 24)
+    # UTC date, not IST local date: this repo's dev sandbox is IST
+    # (UTC+5:30); CI runs in UTC. "Today" in IST can still be "yesterday"
+    # in UTC, which made the freshness test below read this date as being
+    # in the future on the first CI run. Set from the UTC calendar date.
+    VERIFIED_ON: Final[date] = date(2026, 8, 23)
 
     def __init__(self, rules_by_kind: dict[RateKind, list[RateRule]]):
         self._rules_by_kind = rules_by_kind

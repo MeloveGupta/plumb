@@ -5,7 +5,7 @@ from RateBook/apply_bps themselves. Do not "fix" a failing assertion by
 recomputing it from the code under test.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -113,5 +113,12 @@ def test_verified_on_is_within_thirty_days_of_today():
     # Deliberately a ticking check -- passes today, meant to start failing
     # in 30 days to force re-verification before submission (TRD §6.3).
     # Not a bug if this goes red later.
-    days_old = (date.today() - RateBook.VERIFIED_ON).days
+    #
+    # Anchored to UTC, not date.today() (system-local time): this repo's
+    # dev sandbox is IST (UTC+5:30) while GitHub Actions runs in UTC, so a
+    # VERIFIED_ON set from IST "today" can read as tomorrow on a UTC clock
+    # and make days_old go negative -- exactly what broke the first CI run
+    # of this test.
+    today_utc = datetime.now(UTC).date()
+    days_old = (today_utc - RateBook.VERIFIED_ON).days
     assert 0 <= days_old <= 30
