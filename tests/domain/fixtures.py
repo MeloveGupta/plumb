@@ -46,6 +46,7 @@ ENTITY_FIXTURES = [
     (
         Intent,
         {
+            "intent_id": "int_00042",
             "order_id": "ord_00042",
             "seller_id": "sel_00007",
             "expected_seller_amount_paise": 100000,

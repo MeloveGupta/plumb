@@ -45,7 +45,13 @@ class OrderLine(PlumbEntity):
 
 
 class Intent(PlumbEntity):
-    # 1:1 with Order — order_id is both this record's identity and its FK.
+    # SCHEMA-FIX: P0.2 originally had order_id doing double duty as both
+    # identity and FK. BACKEND_SCHEMA.md §3.3's actual DDL gives intent its
+    # own record_key distinct from order_key, found while building the
+    # generator (P0.6) and needing an id to actually assign. Caught the
+    # same class of gap for SellerRateCard back in P0.3 but missed this one
+    # at the time.
+    intent_id: RecordKey
     order_id: RecordKey
     seller_id: str
     expected_seller_amount_paise: Paise
