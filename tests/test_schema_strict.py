@@ -66,7 +66,6 @@ def test_strict_detector_catches_non_compliant_fixture():
     assert find_non_strict_tables(NON_COMPLIANT_FIXTURE) == ["run"]
 
 
-@pytest.mark.xfail(strict=True, reason="schema/run.sql not committed yet — P0.3")
 def test_all_committed_schema_files_declare_strict_on_every_table():
     sql_files = sorted(SCHEMA_DIR.glob("*.sql"))
     if not sql_files:
