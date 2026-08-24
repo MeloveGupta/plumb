@@ -1,43 +1,35 @@
-# Handoff — end of the P0.8 session
+# Handoff — end of the P1.4 session (sellers.csv)
 
 Written for a fresh session that has the seven specs and the committed
 code, but not the conversation that produced them. Several things below
 are decisions that look wrong against a literal reading of a spec and are
 correct anyway, for reasons that only exist in that missing conversation.
-Read this before touching `plumb_gen/` or `plumb/domain/tolerance.py`.
+Read this before touching `plumb_gen/`, `plumb/domain/tolerance.py`, or
+`plumb/ingest/`.
 
 ---
 
-## 1. Where P0 actually stands
+## 1. Where things stand
 
-**GATE P0 is not met.** P0.8 finishing ("the last big P0 task" per the
-implementation plan's own framing) reads like P0 is basically done. It
-isn't — no scorer exists yet, and GATE P0 requires one.
+**GATE P0 is met.** All four criteria: byte-identical generator output
+across two runs; scorer produces a complete metrics table against a
+stub engine returning zero matches; CI green with no API key; the
+import-boundary test fails on a deliberate violation (demonstrated,
+not just asserted).
 
-| Task | Status |
-|---|---|
-| T0.1 Route approval | **Unknown.** Flagged to the user on D0 as the longest-lead item; never confirmed either way in any later session. Check before assuming it landed. |
-| T0.2 Repo skeleton | Done |
-| T0.3 First DEVLOG.md entry | **Not done.** See §6. |
-| P0.1 CI skeleton | Done — import boundary, no-float lint, STRICT-schema, all AST-based, all demonstrated failing on a real violation |
-| P0.2 Pydantic domain models | Done, but needed two rounds of fixes discovered in later sessions — see §5 |
-| P0.3 schema/run.sql | Done — full DDL, all 10 BACKEND_SCHEMA §8 schema tests pass |
-| P0.4 schema/truth.sql | Done |
-| P0.5 Rules module | Done — `RateBook`, `apply_bps`, hand-computed TDS/TCS tests |
-| P0.6 Generator core | Done, but see §5 for corrections made in later sessions |
-| P0.7 Three source writers | Done — `dataset/` now holds real `intent.csv`/`razorpay.json`/`bank.csv`; the canonical JSON dump P0.6 wrote as a stand-in is retired |
-| P0.8 Defect injectors D01-D08 | Done |
-| P0.9 Truth writer | **Half done** — see §4 |
-| P0.10 Byte-identical determinism test | Done — pulled forward into P0.6 rather than done as its own separate task later, then updated in P0.7 to hash the real `dataset/` files instead of the retired canonical dump |
-| P0.11 Scorer, all 8 metric families | **Not started** |
-| P0.12 Scorer vs. stub engine | **Not started** |
-| P0.13 Config files (config_a.yaml / config_b.yaml) | **Not started.** `GeneratorConfig` and `InjectionConfig` exist as Python dataclasses with sensible defaults; no YAML loading exists |
+**P1.1–P1.4 (ingest & normalisation) are done.** Three transactional
+adapters (`intent`, `razorpay`, `bank`) plus `sellers.csv` as a real
+fourth source (see §5's own entry on this — it changes the "three
+sources" framing several docs use, and two of those mentions were
+*deliberately* left unchanged). The UTR extraction cascade, the full
+provenance chain (`source_file`/`raw_record`/`transform_log`/
+`quarantine`), and the `ingest → match → verify → agent → report`
+layer-direction guard are all built and tested against real generated
+data, not just hand-written fixtures.
 
-GATE P0 checklist against the above: byte-identical (met), CI green with
-no API key (met), import-boundary test fails on a deliberate violation
-(met, demonstrated repeatedly, not just asserted) — but "scorer produces
-a complete metrics table against a stub engine" is **not met**. P0.11/12
-are the actual remaining gate blockers, not P0.13.
+**P1.5–P1.11 (the matcher) is next. Nothing in `match/` exists yet** —
+it's still an empty package. `ToleranceProfile` (§2 below) is the one
+piece already built and waiting to be imported, not redefined.
 
 ---
 
@@ -80,31 +72,7 @@ the data model.
 
 ---
 
-## 4. P0.9 — what's already done, what's left
-
-The real truth-writing code already exists and is tested, built during
-P0.8 because P0.8's own acceptance criteria required "recorded in
-truth.sqlite":
-
-- `src/plumb_gen/truth_db.py` — `open_truth_db()`, `write_truth()`
-- `tests/plumb_gen/test_truth_db.py` — round-trip and FK-enforcement tests
-
-What's still actually P0.9's job:
-
-- **`cli.py` never calls `write_truth`.** It only calls `write_sources`
-  for `dataset/`. Truth is not written by the CLI path at all yet — check
-  `src/plumb_gen/cli.py` before assuming otherwise.
-- `write_truth` needs to land at `data/{batch_id}/truth/` per TRD §3.2
-  (already excluded in `.gitignore` from T0.2 — `data/*/truth/`).
-- The CLI has no flag for passing an `InjectionConfig` at all right now —
-  `plumb-gen` always generates a clean batch. Wiring that in sits at the
-  seam between "P0.9: wire truth writing into the CLI" and "P0.13:
-  load config from YAML" — whoever picks this up should decide which task
-  owns it rather than assuming either already covers it.
-
----
-
-## 5. Landmines a fresh session would hit, reading only specs + code
+## 4. Landmines a fresh session would hit, reading only specs + code
 
 **`plumb_gen/rates.py` duplicates `TDS_BPS`/`TCS_BPS` from
 `plumb/rules/ratebook.py` on purpose.** This looks like something to DRY
@@ -133,9 +101,116 @@ tests, not `grep`.** A naive text grep for `datetime.now` once
 false-positived on this project's own docstrings, which describe the rule
 in prose. Any new "never call X anywhere in this package" guard should
 follow the existing AST pattern
-(`tests/test_import_boundary*.py`,
+(`tests/test_import_boundary*.py`, `tests/test_layer_direction.py`,
 `tests/plumb_gen/test_world.py::test_generator_package_never_reads_the_clock`),
 not a text search.
+
+**The no-float exemption now covers `report/` *and* `plumb_eval/`.**
+Both `tests/test_no_float_lint.py`'s `EXEMPT` set and the two docs that
+state the rule (TRD §2 rule 5, `CLAUDE.md` rule 1) were updated
+together when `plumb_eval`'s ratio metrics needed it — check both stay
+in sync if this ever changes again. **The exemption does not extend to
+`ingest/`, `match/`, `verify/`, or any other engine layer** — a float
+inside those sits in L1/L2's determinism-critical path, unlike
+`plumb_eval`'s read-only, downstream scoring. UTR confidence (below)
+almost became a float here and didn't, on purpose.
+
+**UTR confidence is basis points (`int`), not `float`.**
+`plumb/ingest/narration.py`'s `UTR_PATTERNS` uses `confidence_bps`
+(10000/9500/9500/9000/6000), not LLD §3.2's literal `float`
+pseudocode — a `# TRD-DEVIATION:` comment in that file explains why:
+this value lives inside the engine's own determinism-critical path
+(unlike `plumb_eval`'s ratios), so widening the no-float exemption
+again wasn't the right fix. TRD §2 rule 3's own basis-points
+convention was — every value is a fixed constant, never computed or
+divided at runtime.
+
+**`normalise()` purity is easy to regress — this session caught a real
+instance of it.** `bank.py`'s `normalise()` originally called
+`IdSequence.next()` internally to assign `bank_credit_id`, so calling
+it twice on the same `RawRecord` produced two different ids — silently
+breaking LLD §3.1's explicit "pure function" requirement. Caught by a
+call-twice test, not by inspection. Fixed by
+`derive_canonical_id(raw_id, prefix)` (in `plumb/ingest/normalise.py`)
+— it derives the canonical id from the `RawRecord`'s own already-fixed
+`raw_id` instead of consulting a live counter. **Any new adapter (or,
+later, any check) that needs to assign its own id inside `normalise()`
+must use this pattern, not a fresh `IdSequence()` call inside the
+function body** — and should get its own call-twice test, since this
+class of bug produces no symptom other than that specific test
+failing.
+
+**`sellers.csv` is a real fourth generator output, and it changes the
+"three sources" framing several docs use — read before "fixing" any
+of them.** It's a seller master/reference file (`seller_id`,
+`seller_name`, `category`, `commission_bps`, `effective_from`,
+`effective_to`, `version`), closing two gaps found while building
+`intent.py`: neither `seller_id<->seller_name` nor `SellerRateCard`
+data had any path into the engine from the three transactional sources
+alone — `world.seller_rate_cards` was generator-internal, never
+serialized anywhere. Deliberately includes a display-name collision
+(`sel_00001`/`sel_00011`, both `"Sharma Electronics"` in
+`plumb_gen/fixtures.py::SELLER_NAMES`) so ambiguous resolution is
+exercised by real generated data every run, not just a hand-built
+fixture. Most "three sources" mentions were updated to four; **two
+were deliberately left alone — do not "fix" them**:
+- `PLUMB_TRD.md` (`SettlementUnit` "joined view... across all three
+  sources") — stays three. That claim is specifically about one
+  order's per-order lifecycle join; `sellers.csv` is seller-keyed
+  reference data, not per-order.
+- `PLUMB_PRD.md` §3.1 ("Three sources, each with its own vocabulary
+  for the same transaction") — stays three, same reasoning:
+  specifically about per-transaction vocabulary.
+
+Genuinely updated to four: `BACKEND_SCHEMA.md` §1.2 (added the `sel_`
+record-key prefix) and §2 (fourth table row + a clarifying note that
+`sellers.csv` isn't a transactional source in the same sense), `TRD.md`
+§5.1 ("four adapters"), and the illustrative CLI mockups in
+`APP_FLOW.md`/`UIUX_BRIEF.md`/`PRD.md`'s architecture diagram.
+
+**MDR is deliberately absent from `intent.csv` — do not add it.**
+`Intent.expected_seller_amount_paise` is computed in `intent.py` as
+`gross - commission` only, missing MDR (the true formula, in
+`world.py`, is `gross - commission - MDR`). This was checked, not
+assumed: D01's own PRD §6 detection text, TRD §6.2's worked
+`recompute_trace` example, and LLD §5.1's requirement that D01 work on
+`INTENT_ONLY` units (which structurally have no settlement data) all
+independently confirm D01 never needs MDR or this field. The asymmetry
+is real and deliberate — a real platform genuinely doesn't know MDR at
+intent time, since it depends on a payment method the customer hasn't
+chosen yet. L2 recompute (D02, the only other check with a spec'd
+formula) is expected to pull the real MDR from the Razorpay side once
+a unit is assembled, not from this approximation. **Do not "fix" this
+by adding an MDR column to `intent.csv`** — it would misrepresent what
+the platform actually knows at that point.
+
+**`seller_name` resolution has exactly three outcomes, never a fourth
+(a guess).** `intent.py`'s `_resolve_seller_id`, fed by a
+`seller_lookup: dict[str, list[str]]` built by
+`pipeline.py::run_ingest` from the sellers adapter's output *before*
+`intent.csv` is read (an ordering requirement, not a suggestion —
+sellers must run first): exactly one candidate → resolved (`rule_id
+"seller_name_resolved"`); zero candidates → `"seller_name_not_found"`;
+two or more (the deliberate collision) → `"seller_name_ambiguous"`,
+`seller_id` stays the raw name rather than arbitrarily picking one,
+both candidate ids listed in `transform_log.after_text`. Whoever
+builds matching (P1.5+) is the one who actually resolves the ambiguous
+case — cross-referencing `razorpay.json`'s `transfer.recipient` (which
+embeds the true `seller_id`) is the likely mechanism, but that's
+undecided, not implemented.
+
+**Two real bugs in "clean" generated data, both found by scanning actual
+generated output across many seeds, not by reading the code:** an
+unclamped dispute deduction could push `bank_credit.amount_paise`
+negative (present in roughly half of 200 scanned seeds before the fix);
+D08's injected GST-rate error was a silent no-op whenever a UPI-method
+order was selected, since UPI has 0 MDR and a wrong rate applied to zero
+is still zero. Both fixed. Worth restating as a working method for this
+codebase specifically: for the generator, code that looks correct on
+inspection has twice turned out to have a real bug that only showed up by
+actually running it across a range of seeds and checking the output, not
+by reading the logic. Any new injector or generation rule should get the
+same treatment before being trusted.
 
 **`RateBook.VERIFIED_ON` and its freshness test are anchored to UTC
 explicitly** (`datetime.now(UTC)`, not `date.today()`). The dev sandbox
@@ -159,55 +234,45 @@ timestamp — the schema comment says so explicitly); `SellerRateCard` had
 three renamed fields (`commission_rate_bps`, `effective_from_utc`,
 `effective_to_utc` should be `commission_bps`, `effective_from`,
 `effective_to` — no `_utc` suffix, since these are dates, not
-timestamps). Six entities, all fixed now. The lesson: PRD §4's entity
-pseudocode predates `schema/run.sql` and uses looser names — any new
-field on a domain model should be checked against the actual DDL, not
-just PRD §4.
+timestamps). Six entities, all fixed then. The lesson stands: PRD §4's
+entity pseudocode predates `schema/run.sql` and uses looser names — any
+new field on a domain model should be checked against the actual DDL,
+not just PRD §4. (`Seller`, the new model added this session, followed
+the DDL/BACKEND_SCHEMA §1.2 directly rather than PRD §4, which doesn't
+mention it at all — no equivalent drift expected there.)
 
-**Two real bugs in "clean" generated data, both found by scanning actual
-generated output across many seeds, not by reading the code:** an
-unclamped dispute deduction could push `bank_credit.amount_paise`
-negative (present in roughly half of 200 scanned seeds before the fix);
-D08's injected GST-rate error was a silent no-op whenever a UPI-method
-order was selected, since UPI has 0 MDR and a wrong rate applied to zero
-is still zero. Both fixed. Worth restating as a working method for this
-codebase specifically: for the generator, code that looks correct on
-inspection has twice turned out to have a real bug that only showed up by
-actually running it across a range of seeds and checking the output, not
-by reading the logic. Any new injector or generation rule should get the
-same treatment before being trusted.
-
-**Clean data now nets partial refunds from settlement**, via
-`settlement_recon.debit_paise` (the same mechanism already used for
-dispute deductions). This was added specifically so D03
-("refund not netted from seller obligation") has a correct baseline to
-deviate from — before this fix, clean data never netted refunds anywhere,
-so D03 wouldn't have been a meaningful defect. This is intentional
-generation behavior, not scope creep to revert.
+**`Order.seller_id`/`Intent.seller_id`/`SellerRateCard.seller_id` are
+still plain `str`, not `RecordKey`, even though `Seller.seller_id` (new
+this session) is `RecordKey`-typed.** Deliberate, not an oversight:
+tightening the three FK-side fields to match would touch already-tested
+code for a purely cosmetic improvement, not something either gap this
+session closed actually needed. A reasonable, low-risk cleanup for a
+future session, not done here.
 
 **`tests/schema/_truth_db.py` (test-only) and `src/plumb_gen/truth_db.py`
 (real) are similar-looking but deliberately separate.** The former exists
 so schema-level tests can apply `schema/truth.sql` without depending on
 `plumb_gen`'s business logic; it predates `plumb_gen` having real code at
-all. Not duplication to consolidate.
+all. Not duplication to consolidate. (`tests/schema/_eval_db.py` follows
+the same pattern for `schema/eval.sql`.)
 
 **Repo and CI**: `github.com/MeloveGupta/plumb`, public. Every push has
 produced a green Actions run except one (the `VERIFIED_ON` UTC bug above,
-fixed in the same session it broke). The workflow currently runs only
-`uv sync --locked && uv run pytest` — not yet TRD §9's full 8-step
-pipeline (generate T1-T4, run both ablation arms, score, append to
-history), since the matcher/verify/scorer layers it needs don't exist
-yet.
+fixed in the same session it broke) — GitHub's own runner queue has twice
+shown a transient `queued`/`cancelled`-then-auto-retried state on push
+that resolved to green on its own; that's infrastructure flakiness, not
+a real failure, but always confirm the actual run status rather than
+assuming. The workflow currently runs only `uv sync --locked && uv run
+pytest` — not yet TRD §9's full 8-step pipeline (generate T1-T4, run
+both ablation arms, score, append to history), since `match/`/`verify/`
+don't exist yet.
 
 ---
 
-## 6. DEVLOG.md still does not exist
+## 5. Session ritual
 
-Flagged at the end of nearly every session so far; still hasn't been
-written, including the very first entry. There is now real material that
-will become hard to reconstruct convincingly the longer it's left: the
-six-field schema-drift discovery, the negative-settlement bug, the
-D08/UPI zero-effect bug, the `VERIFIED_ON` timezone bug that caused an
-actual CI failure. The track's own submission criteria ask what broke and
-how it was recovered — this is exactly that material, and none of it is
-written down anywhere durable yet.
+Push and confirm CI before treating a session's work as done — added to
+`CLAUDE.md`'s Session ritual and `PLUMB_IMPLEMENTATION_PLAN.md` §8.3/§10
+after two sessions in a row ended with tested, committed work sitting
+unpushed. `DEVLOG.md` is the user's own — they draft it outside the
+repo and commit it themselves. Don't flag it as missing.
