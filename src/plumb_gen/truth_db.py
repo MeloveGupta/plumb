@@ -21,6 +21,17 @@ def open_truth_db(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def open_existing_truth_db(path: str | Path) -> sqlite3.Connection:
+    """Reopen an already-written truth.sqlite -- plumb_eval's read path.
+    Mirrors plumb/store/ddl.py's open_run_db/open_existing_run_db split:
+    re-running executescript's CREATE TABLEs against a file that already
+    has them raises, so a reopen must skip the DDL step entirely.
+    """
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def write_truth(world: World, path: str | Path) -> None:
     conn = open_truth_db(path)
     for record in world.truth_records:

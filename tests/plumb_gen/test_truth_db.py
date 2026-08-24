@@ -6,9 +6,11 @@ tests, now exercised through the real production writer.
 import json
 import sqlite3
 
+import pytest
+
 from plumb_gen.config import GeneratorConfig
 from plumb_gen.injection_config import DefectSpec, InjectionConfig
-from plumb_gen.truth_db import write_truth
+from plumb_gen.truth_db import open_existing_truth_db, write_truth
 from plumb_gen.world import build_world
 
 
@@ -65,4 +67,27 @@ def test_injected_defect_record_key_always_resolves_to_a_truth_record(tmp_path):
            WHERE record_key NOT IN (SELECT record_key FROM truth_record)"""
     ).fetchone()[0]
     assert orphans == 0
+    conn.close()
+
+
+def test_open_existing_truth_db_reopens_without_reapplying_ddl(tmp_path):
+    config = GeneratorConfig(seed=1, batch_id="batch_test")
+    world = build_world(config)
+    db_path = tmp_path / "truth.sqlite"
+    write_truth(world, db_path)
+
+    conn = open_existing_truth_db(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM truth_record").fetchone()[0]
+    assert count == 200
+    conn.close()
+
+
+def test_open_existing_truth_db_does_not_create_a_missing_file(tmp_path):
+    missing_path = tmp_path / "does_not_exist.sqlite"
+    conn = open_existing_truth_db(missing_path)
+    # sqlite3.connect lazily creates the file; the real failure mode for a
+    # genuinely missing truth store is an empty schema, not an OSError --
+    # confirmed here so callers know what "missing" looks like downstream.
+    with pytest.raises(sqlite3.OperationalError):
+        conn.execute("SELECT COUNT(*) FROM truth_record")
     conn.close()
