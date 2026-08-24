@@ -129,7 +129,7 @@ The primary surface. Design it like a product, because it is one.
 plumb · settlement assurance
 run 2026-08-28T14:22:03Z-a3f9c1 · batch_main_200 · HELD_OUT · tolerance default_v1
 
-  L0  ingest         812 records · 3 sources                    4 quarantined
+  L0  ingest         812 records · 4 sources                    4 quarantined
   L1  match          738 matched  90.9%          74 unmatched
   L2  verify         812 verified                31 findings   ₹47,300 at risk
                      └─ 24 findings on MATCHED records

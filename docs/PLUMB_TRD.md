@@ -120,7 +120,7 @@ Every run writes `reports/{run_id}/manifest.json` **before** anything else execu
 
 ### 5.1 Ingest
 
-Three adapters, one interface. Each declares its source vocabulary explicitly:
+Four adapters, one interface — three transactional (intent, razorpay, bank) plus `sellers.csv`, the seller master/reference file that resolves seller identity and rate-card data none of the other three carry. Each declares its source vocabulary explicitly:
 
 ```python
 class SourceAdapter(Protocol):

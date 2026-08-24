@@ -68,7 +68,7 @@ Everything built sits inside that arc. If a feature doesn't, it is out of scope.
 The layering is the argument. Each layer exists for a stated reason.
 
 ```
-L0  INGEST      3 sources → canonical normalised records
+L0  INGEST      4 sources → canonical normalised records
 L1  MATCH       deterministic, no LLM        → matched / candidate / unmatched
 L2  VERIFY      deterministic, no LLM        → recompute obligations, diff vs actual
 L3  INVESTIGATE agent, LLM                   → residual + L2 flags only

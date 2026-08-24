@@ -50,6 +50,7 @@ oln_00042   order_line       rfnd_00042  refund
 txfr_00042  transfer         rvsl_00042  reversal
 disp_00042  dispute          setl_00042  settlement_recon
 bank_00042  bank_credit      rate_00042  seller_rate_card
+sel_00042   seller
 ```
 
 Analysis IDs use the same shape: `mtch_`, `fnd_`, `exc_`, `hyp_`, `call_`, `unit_`.
@@ -60,15 +61,16 @@ Analysis IDs use the same shape: `mtch_`, `fnd_`, `exc_`, `hyp_`, `call_`, `unit
 
 ## 2. Source formats — deliberately heterogeneous
 
-The three sources arrive in **different formats with different vocabularies**, because that is the real problem. Normalising them is L0's actual job, not a formality.
+The three transactional sources arrive in **different formats with different vocabularies**, because that is the real problem. Normalising them is L0's actual job, not a formality.
 
 | Source | Format | Character |
 |---|---|---|
 | Intent ledger | **CSV** | Platform DB export. `snake_case`, rupees as decimal strings, IST timestamps, seller names not IDs. |
 | Razorpay | **JSON** | API response shape. Amounts in **paise already**, Unix epoch timestamps, `id` fields with `pay_`/`txfr_` prefixes. |
 | Bank statement | **CSV** | Free-text `narration` column with the UTR embedded in a string. Date only, no time. Credits and debits in separate columns. |
+| Seller master | **CSV** | Platform DB export, reference data, not per-order. `seller_id`, display name, category, current commission tier. The only place seller identity and rate-card data actually resolve — none of the three transactional sources carry either. Deliberately includes a display-name collision: two sellers, same name, different ids. |
 
-Three units, three time formats, three identifier schemes, one of which is buried in prose. That is a faithful reproduction of the job.
+Three units, three time formats, three identifier schemes, one of which is buried in prose. That is a faithful reproduction of the job. `sellers.csv` sits alongside as a fourth file, but not a fourth *transactional* source in that same sense — no timestamp to normalise, no per-order vocabulary drift. It's what makes the other three's seller identity resolvable at all, and, where two sellers share a name, honestly not always resolvable from a single record alone.
 
 ---
 

@@ -69,7 +69,7 @@ flowchart TD
     B --> C{git dirty?}
     C -->|yes| C1[Stamp PROVISIONAL]
     C -->|no| D
-    C1 --> D[L0 Ingest 3 sources]
+    C1 --> D[L0 Ingest 4 sources]
     D --> E[Normalise + log transforms]
     E --> F[L1 Match: P0 to P3]
     F --> G[L2 Verify ALL units incl. matched]
@@ -135,7 +135,7 @@ $ plumb run --data data/aug_2026 --config configs/default.yaml
 
 Terminal shows a live progress line per layer. **No spinners without numbers** — every stage prints counts as it completes:
 ```
-L0  ingest      812 records from 3 sources    (4 quarantined)
+L0  ingest      812 records from 4 sources    (4 quarantined)
 L1  match       738 matched (90.9%)  ·  74 unmatched
 L2  verify      812 units verified  ·  31 findings  ·  ₹47,300 at risk
 L3  investigate 105 exceptions  ·  62 resolved  ·  28 proposed  ·  15 escalated
