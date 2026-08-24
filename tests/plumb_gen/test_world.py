@@ -82,10 +82,13 @@ def test_every_reversal_has_a_preceding_full_refund(seed):
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_settlement_credit_minus_debit_equals_bank_credit(seed):
+    # Paired by construction order, not by utr: bank_credit.utr is null
+    # for unparseable narrations (P0.7), so it can't be used as a join key
+    # here -- world.py appends one settlement_recon and one bank_credit
+    # per settled order, in lockstep, so position is the reliable pairing.
     world = _world(seed=seed)
-    bank_by_utr = {b.utr: b for b in world.bank_credits}
-    for sr in world.settlement_recons:
-        bank_credit = bank_by_utr[sr.utr]
+    assert len(world.settlement_recons) == len(world.bank_credits)
+    for sr, bank_credit in zip(world.settlement_recons, world.bank_credits, strict=True):
         assert sr.credit_paise - sr.debit_paise == bank_credit.amount_paise
 
 

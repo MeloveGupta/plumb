@@ -1,33 +1,36 @@
-"""Canonical JSON dump of the generated world, for byte-identical testing
-today. This is NOT yet the three genuinely heterogeneous per-source
-formats (CSV-rupees-IST / JSON-paise-epoch / CSV-narration) -- that's
-P0.7's job. One canonical file per entity, sorted keys, stable formatting,
-written to {out_dir}/dataset per TRD §3.2's path convention.
+"""TRD §3.2 -- dataset/ is the engine's only data argument, and
+BACKEND_SCHEMA.md §2 says its actual content is the three heterogeneous
+source files, not a generic canonical export. Replaces P0.6's
+write_dataset (a canonical per-entity JSON dump) -- that was an explicitly
+flagged stand-in until this task existed; nothing reads it once dataset/
+holds the real three files, so it's retired rather than kept alongside.
 """
 
+import csv
 import json
 from pathlib import Path
 
+from plumb_gen.sources import (
+    BANK_CSV_COLUMNS,
+    INTENT_CSV_COLUMNS,
+    bank_csv_rows,
+    intent_csv_rows,
+    razorpay_json_payload,
+)
 from plumb_gen.world import World
 
-_ENTITY_FILES = (
-    ("seller_rate_cards", "seller_rate_card.json"),
-    ("orders", "order.json"),
-    ("order_lines", "order_line.json"),
-    ("intents", "intent.json"),
-    ("payments", "payment.json"),
-    ("refunds", "refund.json"),
-    ("transfers", "transfer.json"),
-    ("reversals", "reversal.json"),
-    ("disputes", "dispute.json"),
-    ("settlement_recons", "settlement_recon.json"),
-    ("bank_credits", "bank_credit.json"),
-)
+
+def _write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
-def write_dataset(world: World, out_dir: Path) -> None:
+def write_sources(world: World, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    for attr, filename in _ENTITY_FILES:
-        records = [record.model_dump(mode="json") for record in getattr(world, attr)]
-        text = json.dumps(records, indent=2, sort_keys=True) + "\n"
-        (out_dir / filename).write_text(text)
+    _write_csv(out_dir / "intent.csv", INTENT_CSV_COLUMNS, intent_csv_rows(world))
+    (out_dir / "razorpay.json").write_text(
+        json.dumps(razorpay_json_payload(world), indent=2, sort_keys=True) + "\n"
+    )
+    _write_csv(out_dir / "bank.csv", BANK_CSV_COLUMNS, bank_csv_rows(world))

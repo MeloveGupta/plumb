@@ -26,3 +26,9 @@ class GeneratorConfig:
     reversal_rate_of_full_refunds_bps: int = 4000
     dispute_rate_bps: int = 200
     hold_rate_bps: int = 1500
+    # Rate of bank narrations that don't match any LLD §3.2 extraction
+    # pattern. A parameter, not a constant, so T4 (null-set) can zero it
+    # out without needing a code change -- an unparseable narration is
+    # never a defect, but T4 sets this to 0 anyway rather than relying on
+    # that distinction being argued later.
+    unparseable_narration_rate_bps: int = 500

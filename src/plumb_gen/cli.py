@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 
 from plumb_gen.config import GeneratorConfig
-from plumb_gen.io import write_dataset
+from plumb_gen.io import write_sources
 from plumb_gen.world import build_world
 
 app = typer.Typer()
@@ -29,7 +29,7 @@ def main(
         batch_as_of=date.fromisoformat(batch_as_of),
     )
     world = build_world(config)
-    write_dataset(world, out / "dataset")
+    write_sources(world, out / "dataset")
 
 
 if __name__ == "__main__":

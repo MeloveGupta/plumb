@@ -30,3 +30,26 @@ COMMISSION_BPS_BY_CATEGORY = {
 }
 
 SELLER_COUNT = 15
+
+# The canonical world only ever holds seller_id. intent.csv needs a human
+# name -- a real platform DB export wouldn't show sel_00001 to itself --
+# so this exists purely for that source's realism. Indexed by seller
+# number (1-based), same as seller_id's own numbering.
+SELLER_NAMES = [
+    "Sharma Electronics",
+    "Bright Fashion House",
+    "Fresh Mart Grocers",
+    "Comfort Home Furnishings",
+    "Glow Beauty Studio",
+    "Metro Electronics Hub",
+    "Trendy Threads Fashion",
+    "Green Valley Grocers",
+    "Nest Home Essentials",
+    "Radiance Beauty Co",
+    "Circuit City Electronics",
+    "Urban Style Fashion",
+    "Daily Needs Grocers",
+    "Cozy Corner Home",
+    "Pure Glow Beauty",
+]
+

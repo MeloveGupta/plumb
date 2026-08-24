@@ -11,6 +11,13 @@ value) -- money stays int, full stop.
 D06 avoidance: on_hold=1 always comes with a real, non-null
 on_hold_until_utc here. NULL + on_hold=1 is created later, exclusively, by
 the D06 injector (P0.8) -- clean data never produces that combination.
+
+Narration/utr generation (LLD §3.2 pattern variety, the unparseable case)
+happens here too, not as a later transform in the source writers --
+settlement_recon.utr and bank_credit.utr/narration must stay internally
+consistent (the true utr Razorpay's settlement report states vs. what the
+bank statement's free text actually reveals), which only works if they're
+assigned together at construction time.
 """
 
 from dataclasses import dataclass, field
@@ -41,6 +48,7 @@ from plumb_gen.fixtures import (
     SELLER_COUNT,
 )
 from plumb_gen.ids import IdSequence
+from plumb_gen.narration import generate_settlement_reference
 from plumb_gen.rates import GST_ON_FEES_BPS, TCS_BPS, TDS_BPS
 
 METHODS = sorted(MDR_BPS_BY_METHOD)  # stable order for rng.choice -- never dict iteration order
@@ -112,22 +120,12 @@ def _build_sellers(config: GeneratorConfig, rng: Random, ids: IdSequence, world:
     return sellers
 
 
-class _UtrCounter:
-    def __init__(self) -> None:
-        self._n = 0
-
-    def next(self) -> str:
-        self._n += 1
-        return f"{300_000_000_000 + self._n:012d}"
-
-
 def _build_order(
     config: GeneratorConfig,
     rng: Random,
     ids: IdSequence,
     world: World,
     seller: Seller,
-    utrs: _UtrCounter,
 ) -> None:
     gross_paise: Paise = rng.randint(50_000, 500_000)  # Rs 500 - Rs 5000
     days_ago = rng.randint(1, config.order_lookback_days)
@@ -294,7 +292,15 @@ def _build_order(
 
     # --- settlement_recon + bank_credit: only when settled ---
     if settled_at is not None:
-        utr = utrs.next()
+        # true_utr is what Razorpay's own settlement report always states
+        # (settlement_recon.utr, never null). bank_utr is the same value
+        # only when the generated narration actually reveals it -- LLD
+        # §3.2 pattern variety and the unparseable case both happen here,
+        # since narration/utr are canonical fields on this record, not a
+        # later transform.
+        true_utr, narration, bank_utr = generate_settlement_reference(
+            rng, config.unparseable_narration_rate_bps
+        )
         credit_paise = transfer_amount_paise
         net_paise = credit_paise - debit_paise
         world.settlement_recons.append(
@@ -303,7 +309,7 @@ def _build_order(
                 entity_key=transfer_id,
                 entity_type="transfer",
                 settlement_id=f"stlbatch_{_iso_date(settled_at)}",
-                utr=utr,
+                utr=true_utr,
                 amount_paise=transfer_amount_paise,
                 fee_paise=0,
                 tax_paise=0,
@@ -318,10 +324,10 @@ def _build_order(
             BankCredit(
                 bank_credit_id=bank_credit_id,
                 bank_ref=f"RAZP{bank_credit_id.split('_')[1]}",  # external reference; not our record_key format
-                utr=utr,
+                utr=bank_utr,
                 amount_paise=net_paise,
                 credited_on=_iso_date(settled_at),
-                narration=f"NEFT/UTR:{utr}/PLATFORM SETTLEMENT",
+                narration=narration,
             )
         )
 
@@ -330,12 +336,11 @@ def build_world(config: GeneratorConfig) -> World:
     rng = Random(config.seed)
     ids = IdSequence()
     world = World()
-    utrs = _UtrCounter()
 
     sellers = _build_sellers(config, rng, ids, world)
 
     for _ in range(config.batch_size):
         seller = sellers[rng.randrange(len(sellers))]
-        _build_order(config, rng, ids, world, seller, utrs)
+        _build_order(config, rng, ids, world, seller)
 
     return world

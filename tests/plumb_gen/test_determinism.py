@@ -1,20 +1,24 @@
 """TRD §8.1 -- byte-identical is the gate, tested the hard way: two full
 runs to different output directories, file hashes compared. Not two
 in-memory World objects compared with ==.
+
+Hashes dataset/'s real three heterogeneous source files (P0.7) -- P0.6's
+canonical JSON dump this test originally hashed has been retired now that
+dataset/ holds the actual engine input.
 """
 
 import hashlib
 from pathlib import Path
 
 from plumb_gen.config import GeneratorConfig
-from plumb_gen.io import write_dataset
+from plumb_gen.io import write_sources
 from plumb_gen.world import build_world
 
 
 def _generate_and_hash(seed: int, out_root: Path) -> dict[str, str]:
     out_dir = out_root / "dataset"
     world = build_world(GeneratorConfig(seed=seed, batch_id="batch_test"))
-    write_dataset(world, out_dir)
+    write_sources(world, out_dir)
     hashes = {}
     for path in sorted(out_dir.rglob("*")):
         if path.is_file():
