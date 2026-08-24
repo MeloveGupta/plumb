@@ -133,3 +133,17 @@ def test_settlement_recon_utr_always_present_even_when_bank_side_is_not(tmp_path
     # bank statement's free text happens to reveal it.
     world = build_world(GeneratorConfig(seed=1, batch_id="batch_test"))
     assert all(sr.utr for sr in world.settlement_recons)
+
+
+def test_razorpay_json_settlements_carry_utr(tmp_path):
+    # world.settlement_recons always has utr set (the test above), but the
+    # JSON *writer* had its own, separate gap: the settlements array never
+    # actually serialized it, so a real consumer of dataset/razorpay.json
+    # (P1.1's ingest adapter) could never have recovered it. Caught by
+    # trying to parse the real file, not by reading sources.py.
+    world = build_world(GeneratorConfig(seed=1, batch_id="batch_test"))
+    write_sources(world, tmp_path)
+    payload = json.loads((tmp_path / "razorpay.json").read_text())
+    assert payload["settlements"]
+    assert all(s["utr"] for s in payload["settlements"])
+    assert {s["utr"] for s in payload["settlements"]} == {sr.utr for sr in world.settlement_recons}

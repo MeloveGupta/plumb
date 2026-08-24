@@ -146,6 +146,7 @@ def razorpay_json_payload(world: World) -> dict:
                 "entity_id": s.entity_key,
                 "entity_type": s.entity_type,
                 "settlement_id": s.settlement_id,
+                "utr": s.utr,
                 "amount": s.amount_paise,
                 "fee": s.fee_paise,
                 "tax": s.tax_paise,
