@@ -43,7 +43,7 @@ Rules:
    ```
 3. **Rates are expressed in basis points as `int`.** 0.1% → `10` bps. 0.5% → `50` bps. 18% → `1800` bps.
 4. Rupee formatting happens only in the report layer, at the last moment.
-5. A lint test asserts no `float` appears in any type annotation under `src/` except in `report/`.
+5. A lint test asserts no `float` appears in any type annotation under `src/` except in `report/` and `plumb_eval/` — the scorer's PRD §7 ratio metrics are read-only and downstream of L1/L2, so they can't threaten the determinism guarantee this rule protects.
 
 Every rounding decision is a defect the system is supposed to *catch*. If our own arithmetic is sloppy, we cannot tell our rounding from theirs.
 

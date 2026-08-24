@@ -12,7 +12,7 @@ Submission: Razorpay AI Buildathon, Track 04. **Target 4 Sep 2026, deadline 5 Se
 
 Violating any of these silently invalidates the submission. If a task seems to require breaking one, stop and say so.
 
-1. **Money is `int` paise. Never `float`, anywhere.** A single float breaks the L1/L2 determinism guarantee, and it will look like a matcher bug for two days before anyone suspects the type.
+1. **Money is `int` paise. Never `float`, anywhere.** A single float breaks the L1/L2 determinism guarantee, and it will look like a matcher bug for two days before anyone suspects the type. The no-float lint covers all of `src/` except `report/` and `plumb_eval/` — the scorer's own ratio metrics (PRD §7) are the one legitimate exception, computed from already-integer inputs, never touching the money path itself.
 2. **L1 (match) and L2 (verify) never call an LLM.** They are pure functions. `determinism_score` must be exactly `1.000`. The LLM lives only in L3.
 3. **The engine never imports or opens `plumb_gen`, `plumb_eval`, or `truth.sqlite`.** Enforced by an AST test and by store separation. Do not work around either.
 4. **Never fabricate a number.** No placeholders, no illustrative values, no "approximately". If a value isn't from a real run, print `NOT_MEASURED`.
