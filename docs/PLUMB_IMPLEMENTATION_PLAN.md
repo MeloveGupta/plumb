@@ -217,10 +217,11 @@ Per session, load: `CLAUDE.md` (always) + the one governing doc section + the ta
 ### 8.2 Start every session with the gate
 Open with the acceptance criteria, not the task description. *"This session is done when defect recall ≥ 80% on T2 and zero false alarms on T4"* produces better work than *"implement the D04 check."*
 
-### 8.3 End every session with three things
+### 8.3 End every session with four things
 1. Run the test suite; commit only green
-2. `DEVLOG.md` entry — what broke, what you changed
-3. If a `# TRD-DEVIATION:` or `# PRD-DEVIATION:` comment was added, read it and decide
+2. Push; confirm CI green
+3. `DEVLOG.md` entry — what broke, what you changed
+4. If a `# TRD-DEVIATION:` or `# PRD-DEVIATION:` comment was added, read it and decide
 
 ### 8.4 Watch for these drifts
 | Drift | Correction |
@@ -250,6 +251,7 @@ Running alongside the build, every day. Neither survives being left to D12.
 
 **Evening, 15 min:**
 - [ ] Tests green? Commit.
+- [ ] Pushed? CI green?
 - [ ] `DEVLOG.md` written?
 - [ ] Metrics moved in the right direction? (`reports/history.jsonl`)
 - [ ] Any footage worth keeping?

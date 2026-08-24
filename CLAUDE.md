@@ -68,8 +68,9 @@ Dependency direction is strict: `ingest → match → verify → agent → repor
 
 **End:**
 1. Tests green → commit. Never commit red.
-2. `DEVLOG.md` entry — what broke, what changed. Dated. The track asks what broke and how you recovered; this file cannot be reconstructed later.
-3. Read any deviation comments added this session and decide on them.
+2. Push. Confirm CI green before treating the session's work as done.
+3. `DEVLOG.md` entry — what broke, what changed. Dated. The track asks what broke and how you recovered; this file cannot be reconstructed later.
+4. Read any deviation comments added this session and decide on them.
 
 ---
 
