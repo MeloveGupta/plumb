@@ -35,6 +35,13 @@ SELLER_COUNT = 15
 # name -- a real platform DB export wouldn't show sel_00001 to itself --
 # so this exists purely for that source's realism. Indexed by seller
 # number (1-based), same as seller_id's own numbering.
+#
+# sel_00001 and sel_00011 share a name deliberately -- two different
+# electronics sellers, both "Sharma Electronics". Real seller directories
+# collide on display name; sellers.csv (P1's seller master file) is the
+# thing that makes that collision representable and load-bearing rather
+# than decorative, and ingest (intent.py) has to handle it honestly
+# rather than assume name uniquely identifies a seller.
 SELLER_NAMES = [
     "Sharma Electronics",
     "Bright Fashion House",
@@ -46,7 +53,7 @@ SELLER_NAMES = [
     "Green Valley Grocers",
     "Nest Home Essentials",
     "Radiance Beauty Co",
-    "Circuit City Electronics",
+    "Sharma Electronics",
     "Urban Style Fashion",
     "Daily Needs Grocers",
     "Cozy Corner Home",

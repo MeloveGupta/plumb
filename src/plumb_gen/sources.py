@@ -1,4 +1,9 @@
-"""BACKEND_SCHEMA.md §2 -- the three heterogeneous source shapes.
+"""BACKEND_SCHEMA.md §2 -- the three heterogeneous transactional source
+shapes, plus sellers.csv, the seller master/reference file (not
+per-order, not one of the "three sources" that table describes -- it's
+what makes seller identity and rate-card lookup resolvable at all,
+since neither the seller_id<->seller_name mapping nor SellerRateCard
+data appears in any of intent.csv/razorpay.json/bank.csv).
 
 No float anywhere in these conversions. Rupee strings are built from
 integer divmod + Python's int ",\" format spec, never paise/100 as a
@@ -179,3 +184,36 @@ def bank_csv_rows(world: World) -> list[dict]:
 
 
 BANK_CSV_COLUMNS = ["bank_ref", "credit", "debit", "value_date", "narration"]
+
+
+def sellers_csv_rows(world: World) -> list[dict]:
+    # world.seller_rate_cards already carries everything but the display
+    # name (identity + rate card in one pass, same source _build_sellers
+    # wrote both from). commission_bps stays a plain int string, same
+    # shape intent.csv's own commission_rate_bps column already uses --
+    # it's a rate, not a money amount, no rupee-string conversion applies.
+    rows = []
+    for rate_card in world.seller_rate_cards:
+        rows.append(
+            {
+                "seller_id": rate_card.seller_id,
+                "seller_name": _seller_name(rate_card.seller_id),
+                "category": rate_card.category,
+                "commission_bps": str(rate_card.commission_bps),
+                "effective_from": rate_card.effective_from,
+                "effective_to": rate_card.effective_to or "",
+                "version": rate_card.version,
+            }
+        )
+    return rows
+
+
+SELLERS_CSV_COLUMNS = [
+    "seller_id",
+    "seller_name",
+    "category",
+    "commission_bps",
+    "effective_from",
+    "effective_to",
+    "version",
+]

@@ -39,12 +39,31 @@ def _read_csv(path):
         return list(csv.DictReader(f))
 
 
-def test_all_three_files_exist(tmp_path):
+def test_all_four_files_exist(tmp_path):
     world = build_world(GeneratorConfig(seed=1, batch_id="batch_test"))
     write_sources(world, tmp_path / "dataset")
+    assert (tmp_path / "dataset" / "sellers.csv").exists()
     assert (tmp_path / "dataset" / "intent.csv").exists()
     assert (tmp_path / "dataset" / "razorpay.json").exists()
     assert (tmp_path / "dataset" / "bank.csv").exists()
+
+
+def test_sellers_csv_has_one_row_per_seller_and_a_deliberate_name_collision(tmp_path):
+    from plumb_gen.fixtures import SELLER_COUNT
+
+    world = build_world(GeneratorConfig(seed=1, batch_id="batch_test"))
+    write_sources(world, tmp_path / "dataset")
+    rows = _read_csv(tmp_path / "dataset" / "sellers.csv")
+
+    assert len(rows) == SELLER_COUNT
+    seller_ids = [r["seller_id"] for r in rows]
+    assert len(seller_ids) == len(set(seller_ids))  # ids themselves never collide
+
+    names = [r["seller_name"] for r in rows]
+    # at least one name is shared by 2+ sellers -- deliberate, not a bug.
+    assert len(set(names)) < len(names)
+    duplicate_names = {name for name in names if names.count(name) > 1}
+    assert duplicate_names, "expected at least one deliberately duplicated seller_name"
 
 
 def test_intent_csv_uses_seller_name_not_seller_id(tmp_path):
