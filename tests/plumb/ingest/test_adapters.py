@@ -5,8 +5,9 @@ input -> same output, called twice).
 
 from pathlib import Path
 
-from plumb.domain.models import BankCredit
+from plumb.domain.models import BankCredit, Dispute, Payment, Refund, Reversal, SettlementRecon, Transfer
 from plumb.ingest.adapters.bank import BankAdapter
+from plumb.ingest.adapters.razorpay import RazorpayAdapter
 from plumb_gen.config import GeneratorConfig
 from plumb_gen.io import write_sources
 from plumb_gen.world import build_world
@@ -85,3 +86,91 @@ def test_bank_adapter_quarantines_unparseable_credit_amount():
     assert result.record is None
     assert result.quarantine_reason is not None
     assert "credit" in result.quarantine_reason
+
+
+def test_razorpay_adapter_declares_its_own_vocabulary():
+    adapter = RazorpayAdapter()
+    assert adapter.source_id == "razorpay"
+    assert adapter.source_tz == "UTC"
+    assert adapter.amount_unit == "paise_int"
+
+
+_KIND_TO_MODEL = {
+    "payment": Payment,
+    "transfer": Transfer,
+    "refund": Refund,
+    "reversal": Reversal,
+    "dispute": Dispute,
+    "settlement": SettlementRecon,
+}
+
+
+def test_razorpay_adapter_normalises_every_row_against_real_data(tmp_path):
+    # dispute_rate_bps bumped well above the 200 (2%) default -- disputes
+    # are otherwise too rare to reliably exercise all six arrays in one
+    # batch regardless of seed.
+    world = build_world(GeneratorConfig(seed=42, batch_id="batch_test", batch_size=200, dispute_rate_bps=3000))
+    dataset_dir = tmp_path / "dataset"
+    write_sources(world, dataset_dir)
+    adapter = RazorpayAdapter()
+    raw_records = list(adapter.read(dataset_dir / "razorpay.json"))
+    assert raw_records  # not vacuously testing zero rows
+
+    seen_kinds: set[str] = set()
+    for raw in raw_records:
+        kind = raw.raw_payload["_kind"]
+        seen_kinds.add(kind)
+        result = adapter.normalise(raw)
+        assert result.record is not None, result.quarantine_reason
+        assert result.quarantine_reason is None
+        assert isinstance(result.record, _KIND_TO_MODEL[kind])
+
+    # all six arrays in razorpay.json actually got exercised, not just some
+    assert seen_kinds == {"payment", "transfer", "refund", "reversal", "dispute", "settlement"}
+
+
+def test_razorpay_adapter_settlement_carries_utr(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = RazorpayAdapter()
+    settlement_raws = [r for r in adapter.read(dataset_dir / "razorpay.json") if r.raw_payload["_kind"] == "settlement"]
+    assert settlement_raws
+    for raw in settlement_raws:
+        result = adapter.normalise(raw)
+        assert result.record.utr  # non-empty -- Razorpay always states its own reference
+
+
+def test_razorpay_adapter_normalise_is_pure(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = RazorpayAdapter()
+    raw = next(adapter.read(dataset_dir / "razorpay.json"))
+    first = adapter.normalise(raw)
+    second = adapter.normalise(raw)
+    assert first.record == second.record
+    assert first.transforms == second.transforms
+
+
+def test_razorpay_adapter_epoch_converts_to_utc(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = RazorpayAdapter()
+    payment_raw = next(r for r in adapter.read(dataset_dir / "razorpay.json") if r.raw_payload["_kind"] == "payment")
+    result = adapter.normalise(payment_raw)
+
+    epoch = payment_raw.raw_payload["captured_at"]
+    transform = next(t for t in result.transforms if t.field == "captured_at")
+    assert transform.rule_id == "epoch_to_utc"
+    assert transform.before_text == str(epoch)
+    # Hand-computed: epoch seconds -> UTC ISO string via the same
+    # calendar.timegm-inverse conversion the generator itself used.
+    from datetime import UTC, datetime
+
+    expected = datetime.fromtimestamp(epoch, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert transform.after_text == expected
+    assert result.record.captured_at_utc == expected
+
+
+def test_razorpay_adapter_reuses_the_sources_own_id_not_a_derived_one(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = RazorpayAdapter()
+    payment_raw = next(r for r in adapter.read(dataset_dir / "razorpay.json") if r.raw_payload["_kind"] == "payment")
+    result = adapter.normalise(payment_raw)
+    assert result.record.payment_id == payment_raw.raw_payload["id"]
