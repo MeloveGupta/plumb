@@ -4,11 +4,11 @@
     plumb_gen    -> may import: plumb.domain only
     plumb_eval   -> may import: plumb.domain, plumb_gen
 
-Only the first and second rows are checked here. plumb_eval stays
-untested for now -- that package is still empty, and a test against an
-empty target is exactly the vacuous-pass shape this project keeps running
-into (P0.1's STRICT-schema stub, the layer-direction rule noted in P0.3).
-It gets a real test the day plumb_eval has content to violate it with.
+All three rows are checked here now. plumb_eval's own row was deferred
+until P0.11 gave it real content to violate -- a test against an empty
+target is exactly the vacuous-pass shape this project keeps running
+into (P0.1's STRICT-schema stub, the layer-direction rule noted in
+P0.3).
 
 Static AST check only. It cannot see a dynamically constructed import
 (importlib.import_module("plumb_gen"), __import__(...), anything built
@@ -24,6 +24,8 @@ FORBIDDEN = ("plumb_gen", "plumb_eval")
 PLUMB_ROOT = Path(__file__).parent.parent / "src" / "plumb"
 PLUMB_GEN_ROOT = Path(__file__).parent.parent / "src" / "plumb_gen"
 PLUMB_GEN_ALLOWED_PREFIXES = ("plumb.domain",)
+PLUMB_EVAL_ROOT = Path(__file__).parent.parent / "src" / "plumb_eval"
+PLUMB_EVAL_ALLOWED_PREFIXES = ("plumb.domain", "plumb_gen")
 
 
 def _root_module(dotted_name: str) -> str:
@@ -80,5 +82,41 @@ def test_plumb_gen_only_imports_plumb_domain():
     for path in python_files(PLUMB_GEN_ROOT):
         tree = ast.parse(path.read_text(), filename=str(path))
         for hit in _disallowed_plumb_imports(tree):
+            violations.append(f"{path}: imports {hit}")
+    assert not violations, "\n".join(violations)
+
+
+def _is_allowed_plumb_eval_import(dotted_name: str) -> bool:
+    return any(dotted_name == p or dotted_name.startswith(p + ".") for p in PLUMB_EVAL_ALLOWED_PREFIXES)
+
+
+def _is_plumb_family(dotted_name: str) -> bool:
+    return (
+        dotted_name == "plumb"
+        or dotted_name.startswith("plumb.")
+        or dotted_name == "plumb_gen"
+        or dotted_name.startswith("plumb_gen.")
+    )
+
+
+def _disallowed_plumb_eval_imports(tree: ast.Module) -> list[str]:
+    hits: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_plumb_family(alias.name) and not _is_allowed_plumb_eval_import(alias.name):
+                    hits.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and _is_plumb_family(node.module):
+                if not _is_allowed_plumb_eval_import(node.module):
+                    hits.append(node.module)
+    return hits
+
+
+def test_plumb_eval_only_imports_plumb_domain_and_plumb_gen():
+    violations: list[str] = []
+    for path in python_files(PLUMB_EVAL_ROOT):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for hit in _disallowed_plumb_eval_imports(tree):
             violations.append(f"{path}: imports {hit}")
     assert not violations, "\n".join(violations)
