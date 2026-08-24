@@ -25,17 +25,9 @@ from typing import Iterator, Literal
 from plumb.domain.keys import IdSequence
 from plumb.domain.models import BankCredit
 from plumb.ingest.narration import extract_utr
-from plumb.ingest.normalise import NormalResult, RawRecord, Transform, derive_canonical_id
+from plumb.ingest.normalise import NormalResult, RawRecord, Transform, derive_canonical_id, paise_from_rupee_string
 
 IST_OFFSET = timedelta(hours=5, minutes=30)
-
-
-def _paise_from_rupee_string(rupee_string: str) -> int:
-    cleaned = rupee_string.replace(",", "")
-    rupees_str, _, paise_str = cleaned.partition(".")
-    rupees = int(rupees_str)
-    paise = int(paise_str.ljust(2, "0")[:2]) if paise_str else 0
-    return rupees * 100 + paise
 
 
 def _ist_midnight_to_utc(date_str: str) -> str:
@@ -72,7 +64,7 @@ class BankAdapter:
         narration = payload.get("narration", "")
 
         try:
-            amount_paise = _paise_from_rupee_string(credit_str)
+            amount_paise = paise_from_rupee_string(credit_str)
         except (ValueError, AttributeError):
             return NormalResult(
                 record=None, transforms=transforms,

@@ -88,3 +88,15 @@ def derive_canonical_id(raw_id: str, prefix: str) -> str:
     """
     suffix = raw_id.rsplit("_", 1)[1]
     return f"{prefix}_{suffix}"
+
+
+def paise_from_rupee_string(rupee_string: str) -> int:
+    """Shared by intent.py and bank.py -- both declare amount_unit=
+    "rupee_string". Inverts plumb_gen/sources.py's own _rupee_string
+    (comma thousands separator, always exactly 2 decimal places).
+    """
+    cleaned = rupee_string.replace(",", "")
+    rupees_str, _, paise_str = cleaned.partition(".")
+    rupees = int(rupees_str)
+    paise = int(paise_str.ljust(2, "0")[:2]) if paise_str else 0
+    return rupees * 100 + paise
