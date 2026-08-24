@@ -41,7 +41,7 @@ CREATE TABLE config_snapshot (
 
 CREATE TABLE source_file (
   source_file_id TEXT PRIMARY KEY,
-  source_id      TEXT NOT NULL CHECK(source_id IN ('intent','razorpay','bank')),
+  source_id      TEXT NOT NULL CHECK(source_id IN ('intent','razorpay','bank','sellers')),
   path           TEXT NOT NULL,
   sha256         TEXT NOT NULL,
   byte_size      INTEGER NOT NULL,

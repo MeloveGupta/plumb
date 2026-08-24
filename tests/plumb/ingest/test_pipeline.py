@@ -6,7 +6,7 @@ from plumb.domain.keys import IdSequence
 from plumb.ingest.adapters.bank import BankAdapter
 from plumb.ingest.adapters.intent import IntentAdapter
 from plumb.ingest.adapters.razorpay import RazorpayAdapter
-from plumb.ingest.pipeline import run_adapter
+from plumb.ingest.pipeline import run_adapter, run_ingest
 from plumb.store.ddl import open_run_db
 from plumb_gen.config import GeneratorConfig
 from plumb_gen.io import write_sources
@@ -79,4 +79,32 @@ def test_run_adapter_quarantine_evidence_is_inspectable(tmp_path):
     assert row is not None
     before_text, after_text, rule_id = row
     assert rule_id in {"utr_labelled", "neft_ref", "rtgs_ref", "imps_ref", "bare_token", "no_match"}
+    conn.close()
+
+
+def test_run_ingest_reads_sellers_before_intent_and_resolves_seller_ids(tmp_path):
+    dataset_dir = _real_dataset(tmp_path, batch_size=200)
+    conn = open_run_db(":memory:")
+    ids = IdSequence()
+
+    summary = run_ingest(
+        dataset_dir / "sellers.csv", dataset_dir / "intent.csv",
+        dataset_dir / "razorpay.json", dataset_dir / "bank.csv",
+        conn, ids,
+    )
+
+    assert conn.execute("SELECT COUNT(*) FROM source_file").fetchone()[0] == 4
+    assert summary["sellers"]["quarantined"] == 0
+    assert summary["intent"]["quarantined"] == 0
+
+    # the deliberate sel_00001/sel_00011 collision means real resolution
+    # traffic hits both outcomes, not just the happy path.
+    rows = conn.execute(
+        "SELECT rule_id, COUNT(*) FROM transform_log WHERE field = 'seller_name' GROUP BY rule_id"
+    ).fetchall()
+    outcomes = dict(rows)
+    assert outcomes.get("seller_name_resolved", 0) > 0
+    assert outcomes.get("seller_name_ambiguous", 0) > 0
+    assert outcomes.get("seller_name_not_found", 0) == 0
+
     conn.close()
