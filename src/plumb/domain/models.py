@@ -154,3 +154,13 @@ class SellerRateCard(PlumbEntity):
     effective_from: str
     effective_to: str | None = None
     version: str
+
+
+class Seller(PlumbEntity):
+    # Added alongside sellers.csv (the seller master/reference file) --
+    # seller_id is its own natural PK here, unlike Intent needing a
+    # separate intent_id: the "sel_NNNNN" scheme already uniquely
+    # identifies one seller, no synthetic id required.
+    seller_id: RecordKey
+    seller_name: str
+    category: str

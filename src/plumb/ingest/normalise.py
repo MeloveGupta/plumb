@@ -1,12 +1,12 @@
 """LLD §3.1 -- the adapter contract and normalise()'s pure-function shape.
 
-CanonicalRecord = the existing plumb.domain.models entities the three
+CanonicalRecord = the existing plumb.domain.models entities the four
 sources actually carry (Order, Intent, Payment, Refund, Transfer,
-Reversal, Dispute, SettlementRecon, BankCredit) -- P0.2 already built
-these for exactly this purpose; no new type needed. OrderLine and
-SellerRateCard are out of scope for P1.1-P1.4: neither is needed by
-this session's acceptance criteria, and OrderLine's taxable/GST
-breakdown isn't consumed by matching (P1.5+) either.
+Reversal, Dispute, SettlementRecon, BankCredit, Seller, SellerRateCard)
+-- P0.2 already built most of these for exactly this purpose; Seller is
+new, added alongside sellers.csv. OrderLine is out of scope for
+P1.1-P1.4: not needed by this session's acceptance criteria, and its
+taxable/GST breakdown isn't consumed by matching (P1.5+) either.
 
 NormalResult.record is widened from LLD's literal
 `CanonicalRecord | None` to `CanonicalRecord | list[CanonicalRecord] | None`:
@@ -16,9 +16,10 @@ category, placed_at_ist, status, is_interstate) and intent-level fields
 -- nowhere else in any of the three sources does order-level ground
 truth appear, and Intent has no fields to hold the order-level half.
 One raw line genuinely becomes two canonical records (an Order and an
-Intent). Flagged and documented, not a silent deviation -- razorpay.py
-and bank.py's adapters return a single record, matching LLD's literal
-shape exactly.
+Intent). Flagged and documented, not a silent deviation. sellers.csv's
+own adapter uses the same list-widened shape for the same reason (one
+row -> Seller + SellerRateCard); razorpay.py and bank.py's adapters
+return a single record, matching LLD's literal shape exactly.
 """
 
 from dataclasses import dataclass, field
@@ -33,19 +34,31 @@ from plumb.domain.models import (
     Payment,
     Refund,
     Reversal,
+    Seller,
+    SellerRateCard,
     SettlementRecon,
     Transfer,
 )
 
 CanonicalRecord = (
-    Order | Intent | Payment | Refund | Transfer | Reversal | Dispute | SettlementRecon | BankCredit
+    Order
+    | Intent
+    | Payment
+    | Refund
+    | Transfer
+    | Reversal
+    | Dispute
+    | SettlementRecon
+    | BankCredit
+    | Seller
+    | SellerRateCard
 )
 
 
 @dataclass(frozen=True)
 class RawRecord:
     raw_id: str
-    source_id: Literal["intent", "razorpay", "bank"]
+    source_id: Literal["intent", "razorpay", "bank", "sellers"]
     line_no: int
     raw_payload: dict  # verbatim source fields -- json.dumps'd as-is at write time
 
@@ -66,9 +79,9 @@ class NormalResult:
 
 
 class SourceAdapter(Protocol):
-    source_id: Literal["intent", "razorpay", "bank"]
+    source_id: Literal["intent", "razorpay", "bank", "sellers"]
     source_tz: str  # "Asia/Kolkata" | "UTC"
-    amount_unit: Literal["rupee_string", "paise_int"]
+    amount_unit: Literal["rupee_string", "paise_int", "not_applicable"]  # sellers.csv has no money field at all
 
     def read(self, path: Path) -> Iterator[RawRecord]: ...
     def normalise(self, raw: RawRecord) -> NormalResult: ...

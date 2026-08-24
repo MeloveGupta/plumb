@@ -5,11 +5,25 @@ input -> same output, called twice).
 
 from pathlib import Path
 
-from plumb.domain.models import BankCredit, Dispute, Intent, Order, Payment, Refund, Reversal, SettlementRecon, Transfer
+from plumb.domain.models import (
+    BankCredit,
+    Dispute,
+    Intent,
+    Order,
+    Payment,
+    Refund,
+    Reversal,
+    Seller,
+    SellerRateCard,
+    SettlementRecon,
+    Transfer,
+)
 from plumb.ingest.adapters.bank import BankAdapter
 from plumb.ingest.adapters.intent import IntentAdapter
 from plumb.ingest.adapters.razorpay import RazorpayAdapter
+from plumb.ingest.adapters.sellers import SellersAdapter
 from plumb_gen.config import GeneratorConfig
+from plumb_gen.fixtures import SELLER_COUNT
 from plumb_gen.io import write_sources
 from plumb_gen.world import build_world
 
@@ -261,3 +275,49 @@ def test_intent_adapter_seller_name_is_flagged_as_unresolved(tmp_path):
     # holds the raw seller_name, not a resolved id.
     assert order.seller_id == raw.raw_payload["seller_name"]
     assert intent.seller_id == raw.raw_payload["seller_name"]
+
+
+def test_sellers_adapter_declares_its_own_vocabulary():
+    adapter = SellersAdapter()
+    assert adapter.source_id == "sellers"
+    assert adapter.source_tz == "Asia/Kolkata"
+    assert adapter.amount_unit == "not_applicable"
+
+
+def test_sellers_adapter_produces_a_seller_and_a_rate_card_per_row(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = SellersAdapter()
+    raw_records = list(adapter.read(dataset_dir / "sellers.csv"))
+    assert len(raw_records) == SELLER_COUNT
+
+    for raw in raw_records:
+        result = adapter.normalise(raw)
+        assert result.quarantine_reason is None, result.quarantine_reason
+        assert isinstance(result.record, list)
+        assert len(result.record) == 2
+        seller, rate_card = result.record
+        assert isinstance(seller, Seller)
+        assert isinstance(rate_card, SellerRateCard)
+        assert seller.seller_id == raw.raw_payload["seller_id"]
+        assert rate_card.seller_id == raw.raw_payload["seller_id"]
+        assert rate_card.commission_bps == int(raw.raw_payload["commission_bps"])
+
+
+def test_sellers_adapter_normalise_is_pure(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = SellersAdapter()
+    raw = next(adapter.read(dataset_dir / "sellers.csv"))
+    first = adapter.normalise(raw)
+    second = adapter.normalise(raw)
+    assert first.record == second.record
+    assert first.transforms == second.transforms
+
+
+def test_sellers_adapter_empty_effective_to_becomes_none(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path)
+    adapter = SellersAdapter()
+    raw = next(adapter.read(dataset_dir / "sellers.csv"))
+    result = adapter.normalise(raw)
+    assert raw.raw_payload["effective_to"] == ""  # generator never sets one today
+    _seller, rate_card = result.record
+    assert rate_card.effective_to is None
