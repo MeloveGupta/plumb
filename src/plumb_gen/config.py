@@ -7,8 +7,10 @@ no-float lint on the first attempt at this file, which is exactly what
 that lint exists to catch.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
+
+from plumb_gen.injection_config import InjectionConfig
 
 
 @dataclass(frozen=True)
@@ -32,3 +34,6 @@ class GeneratorConfig:
     # never a defect, but T4 sets this to 0 anyway rather than relying on
     # that distinction being argued later.
     unparseable_narration_rate_bps: int = 500
+    # Empty by default -- every batch built so far (P0.6/P0.7) stays clean
+    # with no config change. TRD §8.1's declarative defect injection.
+    defects: InjectionConfig = field(default_factory=InjectionConfig)
