@@ -3,38 +3,49 @@ timestamps, seller names not ids. Platform DB export -- one row carries
 both order-level facts (gross_amount, category, placed_at_ist, status,
 is_interstate) and intent-level facts (expected_commission,
 commission_rate_bps, expected_tcs, expected_tds). Nowhere else in any
-of the three sources does order-level ground truth appear, and
-plumb.domain.models.Intent has no fields to hold the order-level half
--- normalise() returns [Order(...), Intent(...)] for one raw line,
-using NormalResult.record's list-widened type (see normalise.py's
-module docstring for the full reasoning).
+of the three transactional sources does order-level ground truth
+appear, and plumb.domain.models.Intent has no fields to hold the
+order-level half -- normalise() returns [Order(...), Intent(...)] for
+one raw line, using NormalResult.record's list-widened type (see
+normalise.py's module docstring for the full reasoning).
 
-TWO KNOWN GAPS, surfaced rather than silently patched:
+TWO KNOWN GAPS this adapter originally flagged:
 
-1. intent.csv gives seller_NAME ("Acme Traders"), never seller_id
-   ("sel_00001"). The name<->id mapping lives only inside plumb_gen's
-   own private fixtures (SELLER_NAMES, indexed by seller_id), which
-   plumb (the engine) may never import (TRD §3.1). Nothing in any of
-   the three actual dataset files carries that mapping --
-   razorpay.json's transfer.recipient embeds a seller_id-derived
-   string ("acc_SEL_00001"), but that's a different source, reachable
-   only through cross-source matching, not single-record
-   normalisation. Order.seller_id/Intent.seller_id are populated with
-   the raw seller_name for now, with a transform_log entry naming this
-   explicitly (rule_id "seller_name_unresolved").
+1. seller_id, resolved (mostly). sellers.csv (the seller master file)
+   now supplies the seller_name<->seller_id mapping intent.csv itself
+   never carried. __init__ takes an injected seller_lookup: dict[str,
+   list[str]] (name -> candidate ids), built once by the pipeline from
+   the sellers adapter's output *before* intent.csv is read -- an
+   explicit ordering requirement, not a suggestion (see pipeline.py).
+   normalise() stays pure with respect to this: the lookup is fixed at
+   construction, never mutated mid-run, so the same raw + the same
+   constructed adapter always give the same result.
+
+   Real seller directories collide on display name (sellers.csv
+   deliberately has one), so resolution has three honest outcomes, each
+   its own transform_log rule_id -- never a silent guess:
+     - exactly one candidate  -> resolved (rule_id "seller_name_resolved")
+     - zero candidates        -> unresolved, name not in sellers.csv at
+                                  all (rule_id "seller_name_not_found")
+     - two or more candidates -> a genuine collision; seller_id stays
+                                  the raw name rather than arbitrarily
+                                  picking one (rule_id
+                                  "seller_name_ambiguous", candidate ids
+                                  listed in after_text) -- disambiguating
+                                  this needs cross-source matching
+                                  (P1.5+), not single-record ingest.
 
 2. Intent.expected_seller_amount_paise's true formula (world.py) is
    gross - commission - MDR, but MDR depends on the payment method,
    which isn't known at intent.csv's own row -- intent.csv carries no
-   MDR/fee column at all. Computed here as gross - commission only,
-   the best available approximation from this source alone, flagged
-   with its own transform_log entry (rule_id
-   "expected_seller_amount_approximated_no_mdr") rather than presented
-   as if it matched the true value.
-
-Both need either a richer intent.csv (an MDR estimate, a seller master
-file) or deferring the correct value to a later cross-source step --
-flagged as open questions, not decided here.
+   MDR/fee column at all. Computed here as gross - commission only, the
+   best available approximation from this source alone, flagged with
+   its own transform_log entry (rule_id
+   "expected_seller_amount_approximated_no_mdr"). Confirmed against
+   PRD §6/TRD §6.2/LLD §5.1 that D01 (the only check whose recompute
+   formula is fully spec'd) needs only the commission rate, never this
+   field or MDR -- so this approximation is a documented limitation,
+   not a blocker, and is staying as-is.
 """
 
 import csv
@@ -55,13 +66,23 @@ def _ist_to_utc(ist_str: str) -> str:
     return utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _resolve_seller_id(seller_name: str, seller_lookup: dict[str, list[str]]) -> tuple[str, Transform]:
+    candidates = seller_lookup.get(seller_name, [])
+    if len(candidates) == 1:
+        return candidates[0], Transform("seller_name", seller_name, candidates[0], "seller_name_resolved")
+    if len(candidates) == 0:
+        return seller_name, Transform("seller_name", seller_name, None, "seller_name_not_found")
+    return seller_name, Transform("seller_name", seller_name, ",".join(candidates), "seller_name_ambiguous")
+
+
 class IntentAdapter:
     source_id: Literal["intent"] = "intent"
     source_tz: str = "Asia/Kolkata"
     amount_unit: Literal["rupee_string"] = "rupee_string"
 
-    def __init__(self) -> None:
+    def __init__(self, seller_lookup: dict[str, list[str]] | None = None) -> None:
         self._ids = IdSequence()
+        self._seller_lookup = seller_lookup or {}
 
     def read(self, path: Path) -> Iterator[RawRecord]:
         with path.open(newline="") as f:
@@ -87,10 +108,8 @@ class IntentAdapter:
             is_interstate = payload["is_interstate"] == "Y"
             transforms.append(Transform("is_interstate", payload["is_interstate"], str(is_interstate), "y_n_to_bool"))
 
-            seller_id_placeholder = payload["seller_name"]
-            transforms.append(
-                Transform("seller_name", payload["seller_name"], seller_id_placeholder, "seller_name_unresolved")
-            )
+            seller_id, seller_transform = _resolve_seller_id(payload["seller_name"], self._seller_lookup)
+            transforms.append(seller_transform)
 
             expected_commission_paise = paise_from_rupee_string(payload["expected_commission"])
             transforms.append(
@@ -107,7 +126,7 @@ class IntentAdapter:
 
         order = Order(
             order_id=payload["order_id"],
-            seller_id=seller_id_placeholder,
+            seller_id=seller_id,
             gross_paise=gross_paise,
             category=payload["category"],
             placed_at_utc=placed_at_utc,
@@ -125,7 +144,7 @@ class IntentAdapter:
         intent = Intent(
             intent_id=derive_canonical_id(raw.raw_id, "int"),
             order_id=payload["order_id"],
-            seller_id=seller_id_placeholder,
+            seller_id=seller_id,
             expected_seller_amount_paise=expected_seller_amount_paise,
             expected_commission_paise=expected_commission_paise,
             commission_rate_applied_bps=commission_rate_bps,

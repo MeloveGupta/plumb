@@ -262,19 +262,79 @@ def test_intent_adapter_y_n_converts_to_bool(tmp_path):
     assert seen_values == {True, False}
 
 
-def test_intent_adapter_seller_name_is_flagged_as_unresolved(tmp_path):
+def _seller_lookup_from_real_sellers_csv(dataset_dir: Path) -> dict[str, list[str]]:
+    import csv as csv_module
+
+    lookup: dict[str, list[str]] = {}
+    with (dataset_dir / "sellers.csv").open(newline="") as f:
+        for row in csv_module.DictReader(f):
+            lookup.setdefault(row["seller_name"], []).append(row["seller_id"])
+    return lookup
+
+
+def test_intent_adapter_with_no_lookup_reports_seller_name_not_found(tmp_path):
     dataset_dir = _write_real_batch(tmp_path)
-    adapter = IntentAdapter()
+    adapter = IntentAdapter()  # no seller_lookup at all
     raw = next(adapter.read(dataset_dir / "intent.csv"))
     result = adapter.normalise(raw)
 
     seller_transform = next(t for t in result.transforms if t.field == "seller_name")
-    assert seller_transform.rule_id == "seller_name_unresolved"
+    assert seller_transform.rule_id == "seller_name_not_found"
     order, intent = result.record
-    # The known gap, explicit rather than silent: seller_id actually
-    # holds the raw seller_name, not a resolved id.
     assert order.seller_id == raw.raw_payload["seller_name"]
     assert intent.seller_id == raw.raw_payload["seller_name"]
+
+
+def test_intent_adapter_resolves_seller_id_via_real_sellers_csv(tmp_path):
+    dataset_dir = _write_real_batch(tmp_path, batch_size=200)
+    seller_lookup = _seller_lookup_from_real_sellers_csv(dataset_dir)
+    adapter = IntentAdapter(seller_lookup=seller_lookup)
+
+    outcomes: dict[str, int] = {}
+    for raw in adapter.read(dataset_dir / "intent.csv"):
+        result = adapter.normalise(raw)
+        seller_transform = next(t for t in result.transforms if t.field == "seller_name")
+        outcomes[seller_transform.rule_id] = outcomes.get(seller_transform.rule_id, 0) + 1
+
+        order, intent = result.record
+        if seller_transform.rule_id == "seller_name_resolved":
+            assert order.seller_id == seller_transform.after_text
+            assert order.seller_id != raw.raw_payload["seller_name"]
+        elif seller_transform.rule_id == "seller_name_ambiguous":
+            # never arbitrarily pick one -- seller_id stays the raw name.
+            assert order.seller_id == raw.raw_payload["seller_name"]
+            candidates = seller_transform.after_text.split(",")
+            assert len(candidates) >= 2
+
+    # "Sharma Electronics" (sel_00001, sel_00011) makes this batch's
+    # collision real, not hypothetical -- confirms both outcomes actually
+    # fire against real generated data, not just a hand-built fixture.
+    assert outcomes.get("seller_name_resolved", 0) > 0
+    assert outcomes.get("seller_name_ambiguous", 0) > 0
+    assert outcomes.get("seller_name_not_found", 0) == 0  # every real name is in sellers.csv
+
+
+def test_intent_adapter_seller_name_ambiguous_lists_both_candidates(tmp_path):
+    lookup = {"Sharma Electronics": ["sel_00001", "sel_00011"]}
+    adapter = IntentAdapter(seller_lookup=lookup)
+    from plumb.ingest.normalise import RawRecord
+
+    raw = RawRecord(
+        raw_id="raw_intent_00001", source_id="intent", line_no=1,
+        raw_payload={
+            "order_id": "ord_00001", "seller_name": "Sharma Electronics", "category": "electronics",
+            "gross_amount": "1000.00", "taxable_value": "847.46", "gst_amount": "152.54",
+            "placed_at_ist": "2026-01-01 10:00:00", "status": "completed", "is_interstate": "N",
+            "expected_commission": "150.00", "commission_rate_bps": "1500",
+            "expected_tcs": "5.00", "expected_tds": "1.00", "rate_card_version": "v1",
+        },
+    )
+    result = adapter.normalise(raw)
+    order, _intent = result.record
+    assert order.seller_id == "Sharma Electronics"  # unresolved, not guessed
+    seller_transform = next(t for t in result.transforms if t.field == "seller_name")
+    assert seller_transform.rule_id == "seller_name_ambiguous"
+    assert set(seller_transform.after_text.split(",")) == {"sel_00001", "sel_00011"}
 
 
 def test_sellers_adapter_declares_its_own_vocabulary():
