@@ -1,4 +1,5 @@
-"""TRD §2.5 — no `float` in any type annotation under src/, except report/.
+"""TRD §2.5 — no `float` in any type annotation under src/, except report/
+and, as of P0.11, plumb_eval/.
 
 Covers three annotation sites, which is really two AST node kinds:
 function parameters and return type (live on FunctionDef/AsyncFunctionDef),
@@ -6,6 +7,15 @@ and everything else — module, class-body (Pydantic/dataclass fields), and
 local variable annotations — which are all the same ast.AnnAssign node.
 Python's grammar doesn't distinguish a dataclass field from any other
 annotated assignment.
+
+plumb_eval is exempted for the same reason report/ is: it's read-only,
+downstream, post-hoc scoring over already-computed int paise/counts (PRD §7's
+ratio metrics -- match_precision, defect_recall, and the rest -- are
+genuinely fractional, and eval.sqlite's own metric.value_num column is
+REAL, per BACKEND_SCHEMA §5). It never feeds back into L1/L2's own
+resolution process, so it cannot break the determinism guarantee this rule
+actually protects (TRD §2: "floating-point arithmetic will silently break
+L1/L2's required determinism_score = 1.000").
 
 Gap: a quoted forward ref (`x: "float"`) is an ast.Constant string, not an
 ast.Name, and this check won't see it.
@@ -17,7 +27,7 @@ from pathlib import Path
 from _pyfiles import python_files
 
 SRC_ROOT = Path(__file__).parent.parent / "src"
-EXEMPT = SRC_ROOT / "plumb" / "report"
+EXEMPT = {SRC_ROOT / "plumb" / "report", SRC_ROOT / "plumb_eval"}
 
 
 def _annotation_uses_float(annotation: ast.expr | None) -> bool:
@@ -56,7 +66,7 @@ def _float_annotations(tree: ast.Module) -> list[str]:
 def test_no_float_in_type_annotations_outside_report_layer():
     violations: list[str] = []
     for path in python_files(SRC_ROOT):
-        if EXEMPT in path.parents:
+        if any(exempt in path.parents for exempt in EXEMPT):
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
         for hit in _float_annotations(tree):

@@ -125,6 +125,15 @@ def insert_resolution(
     )
 
 
+def insert_agent_call(conn, call_id, exception_id, tokens_in, tokens_out, iteration=1, tool="test_tool"):
+    conn.execute(
+        """INSERT INTO agent_call (call_id, exception_id, iteration, tool, args_json, result_sha256,
+             result_row_count, latency_ms, tokens_in, tokens_out, called_at_utc)
+           VALUES (?, ?, ?, ?, '{}', 'sha', 0, 10, ?, ?, '2026-01-01T00:00:05Z')""",
+        (call_id, exception_id, iteration, tool, tokens_in, tokens_out),
+    )
+
+
 def insert_run_row(
     conn, run_id="run_test", started_at_utc="2026-01-01T00:00:00Z", finished_at_utc="2026-01-01T00:00:10Z",
     batch_id="batch_test", generator_seed=1, sample_label="HELD_OUT", ablation_config="rules_only",
