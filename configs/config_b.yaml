@@ -1,0 +1,31 @@
+# config_b -- HELD OUT. PRD §8.4: every headline number in the
+# submission is measured against this config, frozen after the engine
+# is frozen. Never tune a threshold, a check, or a prompt against it.
+#
+# Differs from config_a (configs/config_a.yaml) in both defect mix
+# (different per-class counts, different total) and background noise
+# rates (higher refund/dispute/hold/unparseable-narration rates) --
+# not the same shape regenerated with a different seed. As with
+# config_a, PRD §8.4 leaves the exact numbers to implementer judgment;
+# none of these are cited spec values.
+batch_size: 200
+settlement_days: 3
+hold_release_days: 7
+order_lookback_days: 45
+interstate_rate_bps: 3000
+refund_rate_bps: 1100
+full_refund_share_bps: 5000
+reversal_rate_of_full_refunds_bps: 4000
+dispute_rate_bps: 350
+hold_rate_bps: 2000
+unparseable_narration_rate_bps: 800
+
+defects:
+  D01: {count: 5, severity_range_paise: [800, 60000]}
+  D02: {count: 13}
+  D03: {count: 9}
+  D04: {count: 4}
+  D05: {count: 9}
+  D06: {count: 7}
+  D07: {count: 3}
+  D08: {count: 6}

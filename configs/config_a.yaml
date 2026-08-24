@@ -1,0 +1,31 @@
+# config_a -- TUNE ONLY. PRD §8.4: engine development and threshold
+# tuning happen against this config. Never report a headline metric
+# measured against config_a as HELD_OUT.
+#
+# PRD §8.4 requires config_a and config_b to have "different defect
+# mix, different distributions" but gives no numeric target -- the
+# specific counts and rates below are an implementer judgment call,
+# not a cited spec value. config_b (configs/config_b.yaml) carries a
+# differently-shaped defect mix and noisier background rates, not the
+# same shape with a different seed.
+batch_size: 200
+settlement_days: 3
+hold_release_days: 7
+order_lookback_days: 45
+interstate_rate_bps: 3000
+refund_rate_bps: 800
+full_refund_share_bps: 5000
+reversal_rate_of_full_refunds_bps: 4000
+dispute_rate_bps: 200
+hold_rate_bps: 1500
+unparseable_narration_rate_bps: 500
+
+defects:
+  D01: {count: 8, severity_range_paise: [1000, 40000]}
+  D02: {count: 10}
+  D03: {count: 6}
+  D04: {count: 6}
+  D05: {count: 6}
+  D06: {count: 4}
+  D07: {count: 4}
+  D08: {count: 4}
