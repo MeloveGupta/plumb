@@ -1,8 +1,11 @@
 """LLD §2 — Paise/Bps are documentation, not enforcement.
 
-apply_bps is the rules module's (P0.5) consumer. sum_paise, format_inr,
-parse_rupee_string stay deferred -- nothing consumes them yet.
+apply_bps is the rules module's (P0.5) consumer; sum_paise is match/
+subsets.py's (P1.7). format_inr, parse_rupee_string stay deferred --
+nothing consumes them yet.
 """
+
+from typing import Iterable
 
 Paise = int
 Bps = int
@@ -19,3 +22,7 @@ def apply_bps(amount_paise: Paise, rate_bps: Bps) -> Paise:
     sign = -1 if amount_paise < 0 else 1
     magnitude = abs(amount_paise)
     return sign * ((magnitude * rate_bps + 5_000) // 10_000)
+
+
+def sum_paise(values: Iterable[Paise]) -> Paise:
+    return sum(values)  # exact; no accumulation error by construction
