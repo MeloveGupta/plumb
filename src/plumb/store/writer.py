@@ -68,3 +68,30 @@ def write_quarantine(conn: sqlite3.Connection, raw_id: str, reason_code: str, de
         "INSERT INTO quarantine (raw_id, reason_code, detail) VALUES (?, ?, ?)",
         (raw_id, reason_code, detail),
     )
+
+
+def write_match_group(conn: sqlite3.Connection, ids: IdSequence, *, rule_id: str, pass_: str, confidence_bps: int) -> str:
+    """confidence_bps arrives as an int (TRD §2.5 -- no float anywhere in
+    the engine's own path); match_group.confidence is REAL in the schema
+    and CHECK(confidence > 0 AND confidence <= 1), so the /10000 division
+    happens here, right at the DB boundary, as a bare expression rather
+    than a named float value the rest of the engine could pick up.
+    """
+    match_id = ids.next("mtch")
+    conn.execute(
+        "INSERT INTO match_group (match_id, rule_id, pass, confidence) VALUES (?, ?, ?, ?)",
+        (match_id, rule_id, pass_, confidence_bps / 10_000),
+    )
+    return match_id
+
+
+def write_match_member(conn: sqlite3.Connection, match_id: str, record_key: str, side: str) -> None:
+    """ix_member_claimed_once (BACKEND_SCHEMA.md §3.4) enforces "claimed
+    exactly once" at the DB level: a record_key already written under a
+    different match_id raises sqlite3.IntegrityError here rather than
+    silently double-counting. Callers do not need to check this
+    themselves -- the constraint is the check."""
+    conn.execute(
+        "INSERT INTO match_member (match_id, record_key, side) VALUES (?, ?, ?)",
+        (match_id, record_key, side),
+    )
