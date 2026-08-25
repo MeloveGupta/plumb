@@ -94,7 +94,7 @@ Dated. What you're building, why Track 04, what you expect to be hard. The track
 | P1.8 | Matcher P3 tolerance band | 1.5h | Profile from config, printed in header |
 | P1.9 | Hypothesis property tests | 2h | No record claimed twice; totals conserved |
 | P1.10 | Determinism harness — 5 runs, hash resolutions | 1h | L1 score = 1.000 |
-| P1.11 | CLI run output v1 + conservation line | 2h | Matches App Flow §3.1 layout |
+| P1.11 | CLI run output v1 + conservation line | 2h | Matches UIUX_BRIEF §3.1 layout |
 
 ### 🚦 GATE P1 — end of D5
 - [ ] `determinism_score = 1.000` on L1 across 5 runs

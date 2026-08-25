@@ -130,17 +130,54 @@ class MatchEngine:
     def __init__(self, tolerance: ToleranceProfile, cfg: MatchConfig): ...
 
     def run(self, records: RecordSet) -> MatchResult:
-        """Passes run in order; a record exits at the first pass claiming it."""
-        remaining = records.all_keys()
-        groups: list[MatchGroup] = []
-        for p in (PassP0(), PassP1(), PassP2(self.cfg), PassP3(self.tolerance)):
-            found, remaining = p.run(records, remaining)
-            groups.extend(found)
-        return MatchResult(groups=groups, unmatched=remaining,
-                           ambiguous=self._collect_ambiguous(groups))
+        """P0 finds every exact-identifier chain, but does not commit a
+        chain the moment it spans >=2 sides. An intent+razorpay chain
+        (order/intent/payment/transfer/settlement_recon) already spans 2
+        sides even when the bank leg hasn't joined (BankCredit.utr
+        failed to parse) -- committing it immediately would permanently
+        claim the settlement_recon (a record is claimed exactly once,
+        ever -- ix_member_claimed_once) before P1/P2/P3 get a turn to
+        attach the orphaned bank_credit, and those passes would then
+        have nothing left to compare it against. So P0 returns three
+        pools instead of one:
+
+            groups    -- fully resolved (every applicable side present)
+            remaining -- single-side leftovers (e.g. INTENT_ONLY)
+            pending   -- a >=2-side chain missing its bank leg, held open
+
+        P1 (exact composite), P2 (grouped subset-sum), P3 (tolerance
+        band) each get a turn to attach an orphaned bank credit to a
+        still-open pending group, threading `pending` and the orphan
+        bank-credit pool forward pass to pass -- whatever one pass
+        resolves or rules ambiguous is absent from what the next pass
+        receives. Whatever is still pending after P3 finalises as a
+        plain P0 match: the identity chain was always certain; a
+        still-missing bank leg is a legitimate MISSING_BANK outcome for
+        verify (P2.1) to classify, not a matching failure. A pending
+        group caught in an ambiguous tie still finalises for its known
+        members -- only the contested bank leg is reported separately,
+        so the ambiguity never blocks the part that was never in
+        question.
+        """
+        groups, remaining, pending = PassP0().run(records, records.all_keys())
+        orphan_bank = [k for k in remaining if is_bank_credit(records.get(k))]
+        remaining = [k for k in remaining if k not in orphan_bank]
+
+        ambiguous, contested = [], set()
+        for p in (PassP1(), PassP2(self.cfg), PassP3(self.tolerance)):
+            found, pending, orphan_bank, amb, pass_contested = p.run(records, pending, orphan_bank)
+            groups += found
+            ambiguous += amb
+            contested |= pass_contested
+
+        groups += [finalise_as_p0(pg) for pg in pending]
+        unmatched = remaining + orphan_bank + list(contested)
+        return MatchResult(groups=groups, unmatched=unmatched, ambiguous=ambiguous)
 ```
 
-**`remaining` is an ordered structure, not a set.** Iteration order over a Python `set` varies with insertion history and hash randomisation; a matcher that iterates a set is not deterministic. Use a `list` with an accompanying membership index, or `dict.fromkeys()`.
+**`remaining` (and every pool threaded between passes) is an ordered structure, not a set.** Iteration order over a Python `set` varies with insertion history and hash randomisation; a matcher that iterates a set is not deterministic. Use a `list` with an accompanying membership index, or `dict.fromkeys()`.
+
+**A record is claimed by at most one final `MatchGroup`, by construction, not by convention.** P1/P2/P3 only ever compare a pending group's *summary* figures (its net target amount, its settlement date) against a separate pool of still-unclaimed bank credits — never against another pending group's own members — so nothing already inside an open pending group is ever independently re-offered as a candidate. Within one pass, every possible pairing across the whole pool is computed *before* anything is claimed, so a three-way tie can never be resolved by whichever pairing happens to be checked first — it surfaces as ambiguous instead, exactly like §4.2's subset ties below.
 
 ### 4.2 `subsets.py` — grouped matching, and the ambiguity rule
 
@@ -190,15 +227,15 @@ class ToleranceProfile:
     amount_rel_bps: Bps
     date_window_days: int
 
-    def band(self, amount_paise: Paise) -> Paise:
+    def band_paise(self, amount_paise: Paise) -> Paise:
         """Effective band = max(absolute, relative)."""
-        return max(self.amount_abs_paise, apply_bps(abs(amount_paise), self.amount_rel_bps))
+        return max(self.amount_abs_paise, apply_bps(amount_paise, self.amount_rel_bps))
 
-    def within(self, a: Paise, b: Paise) -> bool:
-        return abs(a - b) <= self.band(max(abs(a), abs(b)))
+    def within(self, expected_paise: Paise, actual_paise: Paise) -> bool:
+        return abs(expected_paise - actual_paise) <= self.band_paise(expected_paise)
 ```
 
-**`ToleranceProfile` is injected into both `PassP3` and check D02.** They must compute the band identically — D02's whole definition is "a shortfall that falls *inside* the band P3 used." Two implementations of `band()` would make the flagship defect undetectable in exactly the cases that matter.
+**`ToleranceProfile` is injected into both `PassP3` and check D02.** They must compute the band identically — D02's whole definition is "a shortfall that falls *inside* the band P3 used." Two implementations of `band_paise()` would make the flagship defect undetectable in exactly the cases that matter.
 
 ---
 
