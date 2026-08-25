@@ -147,7 +147,17 @@ class PassP0:
                     _PendingGroup(
                         members=tuple(sorted(members)),
                         settlement_id=recons[0].settlement_id,
-                        target_paise=sum(r.credit_paise for r in recons),
+                        # net of debit_paise (dispute/refund netting) -- this
+                        # is what plumb_gen/world.py actually credits to the
+                        # bank (net_paise = credit_paise - debit_paise), not
+                        # the gross credit_paise. Comparing against the gross
+                        # figure silently fails to attach a bank credit
+                        # whenever any debit was netted against the
+                        # settlement -- confirmed against real generated
+                        # data (setl_00177: credit_paise=279198,
+                        # debit_paise=167683, 279198-167683=111515=the true
+                        # bank_credit.amount_paise).
+                        target_paise=sum(r.credit_paise - r.debit_paise for r in recons),
                         settled_date=recons[0].settled_at_utc,
                     )
                 )

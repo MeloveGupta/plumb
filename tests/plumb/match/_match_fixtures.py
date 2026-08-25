@@ -38,11 +38,11 @@ def _transfer(n, payment_n, amount=98_000):
     )
 
 
-def _recon(n, transfer_n, settlement_id, utr, credit_paise=98_000, settled_at="2026-07-05T00:00:00Z"):
+def _recon(n, transfer_n, settlement_id, utr, credit_paise=98_000, settled_at="2026-07-05T00:00:00Z", debit_paise=0):
     return SettlementRecon(
         settlement_recon_id=f"setl_{n:05d}", entity_key=f"txfr_{transfer_n:05d}", entity_type="transfer",
         settlement_id=settlement_id, utr=utr, amount_paise=credit_paise, fee_paise=0, tax_paise=0,
-        debit_paise=0, credit_paise=credit_paise, settled_at_utc=settled_at,
+        debit_paise=debit_paise, credit_paise=credit_paise, settled_at_utc=settled_at,
     )
 
 

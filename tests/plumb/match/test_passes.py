@@ -63,6 +63,23 @@ def test_p0_holds_a_missing_bank_leg_open_as_pending_rather_than_claiming_it():
     assert pg.settlement_id == "stlbatch_1"
 
 
+def test_p0_pending_target_nets_out_debit_paise():
+    # A dispute or refund netted against the settlement means the bank
+    # only ever receives credit_paise - debit_paise (plumb_gen/world.py's
+    # own net_paise computation) -- target_paise must match that, not
+    # the gross credit_paise, or an unparseable-UTR bank credit for a
+    # settlement with any netting can never be found again.
+    records = _record_set(
+        _order(1), _intent(1, 1), _payment(1, 1), _transfer(1, 1),
+        _recon(1, 1, "stlbatch_1", "UTR111111111111", credit_paise=279_198, debit_paise=167_683),
+        _bank_credit(1, 111_515, utr=None),
+    )
+    _, _, pending = PassP0().run(records, records.all_keys())
+
+    assert len(pending) == 1
+    assert pending[0].target_paise == 111_515  # 279_198 - 167_683, hand-computed
+
+
 # ---------------------------------------------------------------- P1
 
 
@@ -85,6 +102,29 @@ def test_p1_attaches_an_orphaned_bank_credit_by_exact_amount_and_date():
     group = groups[0]
     assert group.pass_ == "P1" and group.rule_id == "EXACT_COMPOSITE" and group.confidence_bps == 9_500
     assert "bank_00001" in {k for k, _ in group.members}
+
+
+def test_p1_attaches_when_the_bank_credit_is_net_of_a_dispute_deduction():
+    # Same shape as test_p0_pending_target_nets_out_debit_paise, carried
+    # through to an actual P1 attachment: the bank credit's real-world
+    # amount is net of debit_paise, and P1 must compare against that net
+    # figure to find it, not the recon's gross credit_paise.
+    records = _record_set(
+        _order(1), _intent(1, 1), _payment(1, 1), _transfer(1, 1),
+        _recon(1, 1, "stlbatch_1", "UTR111111111111", credit_paise=279_198, debit_paise=167_683,
+               settled_at="2026-07-05T00:00:00Z"),
+        _bank_credit(1, 111_515, credited_on="2026-07-05", utr=None),
+    )
+    _, remaining, pending = PassP0().run(records, records.all_keys())
+    orphan_bank = [k for k in remaining if k == "bank_00001"]
+
+    groups, still_pending, still_orphan, ambiguous, contested = PassP1().run(records, pending, orphan_bank)
+
+    assert still_pending == []
+    assert still_orphan == []
+    assert ambiguous == []
+    assert len(groups) == 1
+    assert "bank_00001" in {k for k, _ in groups[0].members}
 
 
 def test_p1_does_not_attach_when_amount_matches_but_date_does_not():
