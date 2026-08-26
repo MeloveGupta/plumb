@@ -34,6 +34,15 @@ class GeneratorConfig:
     # never a defect, but T4 sets this to 0 anyway rather than relying on
     # that distinction being argued later.
     unparseable_narration_rate_bps: int = 500
+    # PRD §8.2 tiers (T1-T4) -- messiness knobs, orthogonal to defect mix.
+    # All default to 0/off so every existing config and test is untouched
+    # until plumb_gen/tiers.py::apply_tier() explicitly sets one; never
+    # written into config_a.yaml/config_b.yaml (see tiers.py's own
+    # docstring for why tier and config stay separate axes).
+    settlement_batch_rate_bps: int = 0  # T2 -- same-day settlements merge into one shared bank credit (many:1)
+    settlement_split_rate_bps: int = 0  # T2 -- one settlement splits across two bank credits (1:many)
+    format_drift_rate_bps: int = 0  # T2 -- surface-format variation in the rendered source files
+    adversarial_pair_count: int = 0  # T3 -- identical-amount/same-day order pairs, LLD §4.2's ambiguity trap
     # Empty by default -- every batch built so far (P0.6/P0.7) stays clean
     # with no config change. TRD §8.1's declarative defect injection.
     defects: InjectionConfig = field(default_factory=InjectionConfig)

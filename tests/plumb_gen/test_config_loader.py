@@ -39,6 +39,19 @@ def test_loads_generator_fields_and_defects(tmp_path):
     }
 
 
+def test_tier_applies_after_yaml_loading(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("unparseable_narration_rate_bps: 800\n")
+
+    config = load_generator_config(
+        config_path, seed=7, batch_id="batch_test", batch_as_of=date(2026, 1, 1), tier="T4"
+    )
+
+    # T4 overrides narration regardless of what the YAML set it to.
+    assert config.unparseable_narration_rate_bps == 0
+    assert config.defects.total_count() == 0
+
+
 def test_unknown_defect_id_raises(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

@@ -50,3 +50,30 @@ def test_cli_writes_dataset_and_truth(tmp_path):
 
     assert truth_count == 20
     assert defect_count == 3  # 2 (D01) + 1 (D06), hand-counted from the config above
+
+
+def test_cli_accepts_a_tier_flag(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("batch_size: 10\n")
+    out_dir = tmp_path / "batch_t4"
+
+    result = runner.invoke(
+        app,
+        ["--seed", "42", "--config", str(config_path), "--out", str(out_dir), "--tier", "T4"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (out_dir / "truth" / "truth.sqlite").exists()
+
+
+def test_cli_rejects_an_unknown_tier(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("batch_size: 10\n")
+    out_dir = tmp_path / "batch_bad_tier"
+
+    result = runner.invoke(
+        app,
+        ["--seed", "42", "--config", str(config_path), "--out", str(out_dir), "--tier", "T9"],
+    )
+
+    assert result.exit_code != 0

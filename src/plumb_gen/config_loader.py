@@ -7,6 +7,12 @@ including the defect mix -- comes from the file, so config A and config
 B differ by committed YAML content, not by a flag someone forgot to
 pass.
 
+tier is CLI-supplied too, for the same reason and one more: PRD §8.2's
+T1-T4 tiers are orthogonal to config_a/config_b's defect mix (see
+plumb_gen/tiers.py's own docstring), so tier never lives in the YAML
+either -- a tier field there would make "T2 under config_b" require a
+committed file per combination instead of an independent flag.
+
 # TRD-DEVIATION: TRD §8.1's inline example uses long descriptive defect
 # keys (D01_COMMISSION_RATE_DRIFT), a `severity_range` field, and a
 # `within_band` flag. None of that matches what P0.8 already shipped in
@@ -26,6 +32,7 @@ import yaml
 
 from plumb_gen.config import GeneratorConfig
 from plumb_gen.injection_config import DEFECT_IDS, DefectSpec, InjectionConfig
+from plumb_gen.tiers import apply_tier
 
 
 def load_generator_config(
@@ -34,6 +41,7 @@ def load_generator_config(
     seed: int,
     batch_id: str,
     batch_as_of: date,
+    tier: str | None = None,
 ) -> GeneratorConfig:
     raw = yaml.safe_load(config_path.read_text())
     defects_raw = raw.pop("defects", {})
@@ -50,10 +58,11 @@ def load_generator_config(
             severity_range_paise=tuple(severity_range) if severity_range else None,
         )
 
-    return GeneratorConfig(
+    config = GeneratorConfig(
         seed=seed,
         batch_id=batch_id,
         batch_as_of=batch_as_of,
         defects=InjectionConfig(defects=defects),
         **raw,
     )
+    return apply_tier(config, tier)
