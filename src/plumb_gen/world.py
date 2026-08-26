@@ -562,6 +562,58 @@ def _mark_unresolvable(world: World, bank_credit_id: str) -> None:
             return
 
 
+def _correct_tcs_for_organic_refunds(world: World) -> None:
+    """intent.expected_tcs_paise / TruthRecord.true_obligation['tcs_paise']
+    are locked in earlier in _build_order (net_of_returns_paise =
+    gross_paise - forced_refund_paise, forced_refund_paise only nonzero
+    for D03/D04) -- before the organic refund branch (clean orders only)
+    even runs. PRD §5.2 nets ALL returns in the period, not just forced
+    ones, so a clean order that later rolls an organic refund had its
+    TCS computed on the wrong basis: a generator sequencing bug, not a
+    defect, found by writing D04's real check against real generated
+    data and tracing every disagreement back to its cause -- same class
+    of bug D03 exposed in P0.8. Fixed as a post-loop correction (no RNG
+    consumed, so it can't shift any other order's random rolls) rather
+    than reordering _build_order's own draws, which would ripple through
+    every roll after the reorder point for every order.
+
+    D03/D04 orders are untouched: D03's own TCS was already correctly
+    net of its forced refund; D04's is deliberately wrong (the injected
+    defect itself) and must stay that way.
+    """
+    defected_order_keys = {d.record_key for d in world.injected_defects}
+    order_id_by_payment_id = {p.payment_id: p.order_id for p in world.payments}
+    refund_total_by_order_id: dict[str, int] = {}
+    for r in world.refunds:
+        oid = order_id_by_payment_id[r.payment_id]
+        refund_total_by_order_id[oid] = refund_total_by_order_id.get(oid, 0) + r.amount_paise
+    gross_by_order_id = {o.order_id: o.gross_paise for o in world.orders}
+
+    for i, intent in enumerate(world.intents):
+        oid = intent.order_id
+        if oid in defected_order_keys:
+            continue
+        refund_total = refund_total_by_order_id.get(oid, 0)
+        if refund_total == 0:
+            continue
+        corrected = apply_bps(gross_by_order_id[oid] - refund_total, TCS_BPS)
+        if corrected != intent.expected_tcs_paise:
+            world.intents[i] = intent.model_copy(update={"expected_tcs_paise": corrected})
+
+    for i, record in enumerate(world.truth_records):
+        oid = record.record_key
+        if oid in defected_order_keys:
+            continue
+        refund_total = refund_total_by_order_id.get(oid, 0)
+        if refund_total == 0:
+            continue
+        corrected = apply_bps(gross_by_order_id[oid] - refund_total, TCS_BPS)
+        if corrected != record.true_obligation.get("tcs_paise"):
+            obligation = dict(record.true_obligation)
+            obligation["tcs_paise"] = corrected
+            world.truth_records[i] = replace(record, true_obligation=obligation)
+
+
 def _apply_settlement_messiness(config: GeneratorConfig, rng: Random, ids: IdSequence, world: World) -> None:
     """PRD §8.2 T2 -- many:1 batching, 1:many splitting, and genuine
     partial settlement. A post-loop pass, run only after every per-order
@@ -777,5 +829,6 @@ def build_world(config: GeneratorConfig) -> World:
 
     _construct_adversarial_pairs(config, rng, ids, world)
     _apply_settlement_messiness(config, rng, ids, world)
+    _correct_tcs_for_organic_refunds(world)
 
     return world

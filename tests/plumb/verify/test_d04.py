@@ -46,21 +46,18 @@ def test_clean_no_refund_does_not_fire():
     assert _CHECK.run(unit, _CTX) is None
 
 
-def test_clean_order_with_an_organic_refund_is_a_known_false_positive():
-    """Confirmed, accepted gap (session plan review, not a bug): world.py
-    computes intent.expected_tcs_paise on GROSS for every non-D04 order,
-    even one with an organic (non-forced) refund, since TCS is computed
-    before the organic-refund branch runs. This check recomputes net of
-    ALL refunds (tax-law-correct, PRD §5.2), so it disagrees with truth
-    here -- ship-and-document was the explicit decision, not silently
-    absorbed. Do not "fix" this by excluding refunded units from D04;
-    that would make D04 detect nothing, since D04 is injected exactly on
-    orders that already have a forced refund."""
-    unit = _unit(applied_tcs=1_000, refunds=[refund(1, 1, 40_000)])  # world truth: gross-basis 1,000
-    finding = _CHECK.run(unit, _CTX)
-
-    assert finding is not None  # accepted false positive, not a None
-    assert finding.amount_at_risk_paise == 200  # apply_bps(160_000, 50) = 800; |1000-800|=200
+def test_clean_order_with_an_organic_refund_does_not_fire():
+    """Regression guard: world.py originally computed intent.
+    expected_tcs_paise on GROSS for every non-D04 order, even one with an
+    organic (non-forced) refund, since TCS was computed before the
+    organic-refund branch ran -- an 11-false-positive generator bug this
+    check's tax-law-correct recompute exposed (root-caused and fixed in
+    world.py's _correct_tcs_for_organic_refunds; see
+    tests/plumb_gen/test_world.py's regression test for the generator
+    side). Post-fix, a clean order's applied TCS is already net of its
+    own organic refund, so this must NOT fire."""
+    unit = _unit(applied_tcs=800, refunds=[refund(1, 1, 40_000)])  # apply_bps(160_000, 50) = 800, now correct
+    assert _CHECK.run(unit, _CTX) is None
 
 
 def test_no_applicable_rate_declines_rather_than_raising():

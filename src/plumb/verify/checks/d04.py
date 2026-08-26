@@ -10,35 +10,17 @@ world.py:175) is never read again anywhere in plumb_gen or plumb
 (confirmed by grep). Both out of scope this session, same restraint
 D03/D05 apply to their own PRD gaps.
 
-*** KNOWN, ACCEPTED FALSE-POSITIVE SHAPE, confirmed against world.py, not
-hypothetical -- ship-and-document was the repo owner's explicit decision
-(session plan review): *** a given order's refunds list has at most one
-entry -- world.py's refund logic is `if force_refund: ... elif defect_id
-is None and ...: ...` (world.py:343-368), mutually exclusive. TCS is
-computed at world.py:227-235, BEFORE the organic-refund branch at
-:354-368 -- so for every non-D04 order, forced_refund_paise is 0 and
-intent.expected_tcs_paise == apply_bps(gross_paise, TCS_BPS) REGARDLESS
-of any organic refund that order later rolls. A net-of-all-refunds
-recompute (below) therefore disagrees with world.py's own clean-path
-truth specifically on a clean order with an organic refund. Worked
-example: gross=200,000, organic refund=40,000 -> world truth
-expected_tcs_paise=1,000; this check's recompute=800; delta=200 -- a
-false D04 finding on data the generator's own labels call clean.
-
-This is a gap in world.py's own truth model (TCS is computed before the
-organic-refund roll, so "clean" data with an organic refund is not, by
-strict TCS-law standard, actually net-of-returns-correct either), not a
-flaw in this check's logic: real TCS law (PRD §5.2, Section 52 CGST Act)
-nets ALL returns in the period, and no field distinguishes a forced
-(D03/D04) refund from an organic one after the fact -- guessing a
-heuristic to tell them apart would be exactly the kind of pattern-
-guessing CLAUDE.md rule 4 forbids. Decided to ship the tax-law-correct
-check as-is rather than change world.py's TCS sequencing (bigger blast
-radius than this session's scope -- could shift previously-measured
-metrics documented in HANDOFF.md). See
-tests/plumb/verify/test_d04.py::test_clean_order_with_an_organic_refund_is_a_known_false_positive
-for the fixture that demonstrates this explicitly, and the real-batch
-measurement in this session's verification notes for the actual rate.
+GENERATOR-FIX NOTE: real-batch verification of this check originally
+found 11 false positives against 6 true positives (35% precision) on
+clean orders that had rolled an "organic" (non-forced) refund. Root
+cause traced to world.py, not this check: TCS was computed before the
+organic-refund branch ran, so a clean order's truth stayed on gross
+even after that order later rolled a refund -- PRD §5.2 nets ALL
+returns in the period, no carve-out for which refund "counts." Fixed in
+world.py (`_correct_tcs_for_organic_refunds`, a post-loop pass) rather
+than in this check, which was already tax-law-correct throughout. See
+tests/plumb_gen/test_world.py::test_clean_order_with_an_organic_refund_has_tcs_net_of_that_refund
+for the generator-side regression guard.
 
 NoApplicableRate: Check.applies_to(self, unit) has no ctx (already
 shipped, tested last session), so it structurally cannot pre-check rate

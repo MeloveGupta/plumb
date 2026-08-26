@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from plumb.domain.money import apply_bps
 from plumb_gen.config import GeneratorConfig
+from plumb_gen.rates import TCS_BPS
 from plumb_gen.world import build_world
 
 SEEDS = [1, 2, 3, 7, 42]
@@ -43,6 +45,48 @@ def test_transfer_amount_derives_from_gross_commission_mdr(seed):
         intent = intents_by_order[payment.order_id]
         recomputed = payment.amount_paise - intent.expected_commission_paise - payment.fee_paise
         assert transfer.amount_paise == recomputed
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_clean_order_with_an_organic_refund_has_tcs_net_of_that_refund(seed):
+    """A generator sequencing bug, found by writing D04's real check
+    against real generated data (P2.6): TCS was computed before the
+    organic-refund branch ran, so a clean order's TCS stayed on gross
+    even after rolling a refund. PRD §5.2 nets ALL returns in the
+    period -- fixed by _correct_tcs_for_organic_refunds, a post-loop
+    pass. This test fails on the pre-fix code (would assert
+    intent.expected_tcs_paise == apply_bps(order.gross_paise, TCS_BPS)
+    for at least one such order) and passes on the fix.
+    """
+    world = _world(seed=seed)
+    defected = {d.record_key for d in world.injected_defects}
+    payments_by_order = {p.order_id: p for p in world.payments}
+    intents_by_order = {i.order_id: i for i in world.intents}
+    truth_by_key = {t.record_key: t for t in world.truth_records}
+    refunds_by_payment: dict[str, list] = {}
+    for r in world.refunds:
+        refunds_by_payment.setdefault(r.payment_id, []).append(r)
+
+    checked_at_least_one = False
+    for order in world.orders:
+        if order.order_id in defected:
+            continue
+        payment = payments_by_order.get(order.order_id)
+        if payment is None:
+            continue
+        refunds = refunds_by_payment.get(payment.payment_id, [])
+        if not refunds:
+            continue
+        refund_total = sum(r.amount_paise for r in refunds)
+        expected_tcs = apply_bps(order.gross_paise - refund_total, TCS_BPS)
+
+        intent = intents_by_order[order.order_id]
+        assert intent.expected_tcs_paise == expected_tcs
+        truth = truth_by_key[order.order_id]
+        assert truth.true_obligation["tcs_paise"] == expected_tcs
+        checked_at_least_one = True
+
+    assert checked_at_least_one, "no clean order with an organic refund rolled at this seed"
 
 
 @pytest.mark.parametrize("seed", SEEDS)
