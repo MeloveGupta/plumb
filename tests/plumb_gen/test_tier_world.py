@@ -76,12 +76,23 @@ def test_adversarial_pairs_share_exact_amount_and_date(seed):
 
     paired_recon_ids = {rid for group in paired for rid in group}
     by_recon = {r.settlement_recon_id: r for r in world.settlement_recons}
+    # Correlated via truth's true_counterparts, not an assumed shared
+    # numeric suffix -- bank_credit_id is ingest-derived from CSV row
+    # position, not a value carried in the row, so nothing guarantees
+    # it lines up with settlement_recon_id's own suffix once anything
+    # reorders world.bank_credits (batch_rate_bps/split_rate_bps do; a
+    # future combination with adversarial_pair_count would otherwise
+    # silently break this test the same way it broke the real
+    # re-measurement before that bug was found and fixed).
+    bank_id_by_recon_id = {}
+    for record in world.truth_records:
+        recon_id = next((c for c in record.true_counterparts if c.startswith("setl_")), None)
+        bank_id = next((c for c in record.true_counterparts if c.startswith("bank_")), None)
+        if recon_id and bank_id:
+            bank_id_by_recon_id[recon_id] = bank_id
     bank_by_id = {bc.bank_credit_id: bc for bc in world.bank_credits}
-    # both settlement_recon_ids and bank_credit_ids share the same
-    # numeric suffix by construction (setl_00005 <-> bank_00005)
     for rid in paired_recon_ids:
-        suffix = rid.split("_")[1]
-        bc = bank_by_id[f"bank_{suffix}"]
+        bc = bank_by_id[bank_id_by_recon_id[rid]]
         assert bc.utr is None
         assert _extracts_no_utr_pattern(bc.narration)
         assert bc.amount_paise == by_recon[rid].credit_paise - by_recon[rid].debit_paise
@@ -92,43 +103,55 @@ def test_adversarial_pair_count_too_large_for_the_batch_raises():
         _world(seed=42, batch_size=5, adversarial_pair_count=10)
 
 
+def _recon_and_bank_for(world, record):
+    # Correlated via truth's own true_counterparts, never by assumed id
+    # suffix: bank_credit_id is ingest-derived from CSV row position
+    # (plumb/ingest/adapters/bank.py), not from any value carried in
+    # the row, so it is *not* guaranteed to share a numeric suffix with
+    # its settlement_recon_id once anything has reordered
+    # world.bank_credits (batching/splitting/in-flight all do). This
+    # bit the re-measurement script for real before it was fixed here.
+    recon_id = next(c for c in record.true_counterparts if c.startswith("setl_"))
+    bank_id = next(c for c in record.true_counterparts if c.startswith("bank_"))
+    recon = next(r for r in world.settlement_recons if r.settlement_recon_id == recon_id)
+    bank_credit = next(bc for bc in world.bank_credits if bc.bank_credit_id == bank_id)
+    return recon, bank_credit
+
+
 @pytest.mark.parametrize("seed", SEEDS)
 def test_in_flight_settlements_are_genuinely_partial_and_unparseable(seed):
     world = _world(seed=seed, unparseable_narration_rate_bps=0, settlement_in_flight_rate_bps=5000)
-    by_recon = {r.settlement_recon_id: r for r in world.settlement_recons}
-    in_flight = [bc for bc in world.bank_credits if bc.utr is None]
-    assert in_flight  # vacuous otherwise
+    settled_records = [r for r in world.truth_records if any(c.startswith("bank_") for c in r.true_counterparts)]
+    in_flight_records = []
+    for record in settled_records:
+        recon, bank_credit = _recon_and_bank_for(world, record)
+        if bank_credit.utr is None:
+            in_flight_records.append((recon, bank_credit))
+    assert in_flight_records  # vacuous otherwise
 
-    for bc in in_flight:
-        suffix = bc.bank_credit_id.split("_")[1]
-        recon = by_recon[f"setl_{suffix}"]
+    for recon, bank_credit in in_flight_records:
         net_target = recon.credit_paise - recon.debit_paise
-        assert _extracts_no_utr_pattern(bc.narration)
+        assert _extracts_no_utr_pattern(bank_credit.narration)
         # genuinely partial -- 30-70% of the true net target, never the
         # full amount (that would just be an ordinary unparseable-
         # narration case, not this feature)
-        assert 0 < bc.amount_paise < net_target
+        assert 0 < bank_credit.amount_paise < net_target
 
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_in_flight_settlements_are_marked_unresolvable_in_truth(seed):
     world = _world(seed=seed, unparseable_narration_rate_bps=0, settlement_in_flight_rate_bps=5000)
-    by_recon = {r.settlement_recon_id: r for r in world.settlement_recons}
-    in_flight_bank_ids = set()
-    for bc in world.bank_credits:
-        if bc.utr is None:
-            suffix = bc.bank_credit_id.split("_")[1]
-            recon = by_recon[f"setl_{suffix}"]
-            if bc.amount_paise < recon.credit_paise - recon.debit_paise:
-                in_flight_bank_ids.add(bc.bank_credit_id)
-    assert in_flight_bank_ids  # vacuous otherwise
+    settled_records = [r for r in world.truth_records if any(c.startswith("bank_") for c in r.true_counterparts)]
 
-    unresolvable_records = [r for r in world.truth_records if not r.resolvable_from_available_data]
-    assert len(unresolvable_records) == len(in_flight_bank_ids)
-    flagged_bank_ids = {
-        bank_id for r in unresolvable_records for bank_id in r.true_counterparts if bank_id.startswith("bank_")
-    }
-    assert flagged_bank_ids == in_flight_bank_ids
+    expected_unresolvable_keys = set()
+    for record in settled_records:
+        recon, bank_credit = _recon_and_bank_for(world, record)
+        if bank_credit.utr is None and bank_credit.amount_paise < recon.credit_paise - recon.debit_paise:
+            expected_unresolvable_keys.add(record.record_key)
+    assert expected_unresolvable_keys  # vacuous otherwise
+
+    actual_unresolvable_keys = {r.record_key for r in world.truth_records if not r.resolvable_from_available_data}
+    assert actual_unresolvable_keys == expected_unresolvable_keys
 
 
 def test_in_flight_settlement_money_is_not_conserved_by_design():

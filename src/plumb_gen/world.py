@@ -667,7 +667,33 @@ def _apply_settlement_messiness(config: GeneratorConfig, rng: Random, ids: IdSeq
                 consumed.add(bc.bank_credit_id)
                 _mark_unresolvable(world, bc.bank_credit_id)
 
-    world.bank_credits[:] = [bc for bc in world.bank_credits if bc.bank_credit_id not in consumed] + new_bank_credits
+    final_list = [bc for bc in world.bank_credits if bc.bank_credit_id not in consumed] + new_bank_credits
+
+    # Renumber by final list position and remap every truth reference.
+    # bank_credit_id is the one entity id ingest derives from CSV row
+    # position (plumb/ingest/adapters/bank.py's derive_canonical_id),
+    # not from any value carried in the row itself -- unlike
+    # settlement_recon_id, which razorpay.json states explicitly per
+    # row (BACKEND_SCHEMA.md's own "every entity here already carries
+    # its own id" framing). Removing consumed entries and appending new
+    # ones changes every *surviving* record's row position too, not
+    # just the manufactured ones -- so this has to renumber the whole
+    # list, every time, not only the touched entries. Caught by
+    # comparing truth's true_counterparts against what the matcher
+    # actually ingested for the same order: they referred to two
+    # different bank credits entirely.
+    id_remap: dict[str, str] = {}
+    renumbered: list[BankCredit] = []
+    for i, bc in enumerate(final_list, start=1):
+        new_id = f"bank_{i:05d}"
+        id_remap[bc.bank_credit_id] = new_id
+        renumbered.append(bc.model_copy(update={"bank_credit_id": new_id, "bank_ref": f"RAZP{i:05d}"}))
+    world.bank_credits[:] = renumbered
+
+    for i, record in enumerate(world.truth_records):
+        remapped = [id_remap.get(c, c) for c in record.true_counterparts]
+        if remapped != record.true_counterparts:
+            world.truth_records[i] = replace(record, true_counterparts=remapped)
 
 
 def _construct_adversarial_pairs(config: GeneratorConfig, rng: Random, ids: IdSequence, world: World) -> None:
