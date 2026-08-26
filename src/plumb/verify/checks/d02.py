@@ -46,13 +46,19 @@ from plumb.verify.trace import EvidenceRef, Finding, TraceBuilder, classify_seve
 from plumb.verify.unit import Completeness, SettlementUnit
 
 
-def compute_expected_net(unit: SettlementUnit, ctx: CheckContext) -> int:
+def expected_transfer_paise(unit: SettlementUnit) -> int:
+    """gross - commission - mdr, before any refund/dispute netting.
+    Shared with d03.py, which needs this pre-debit figure on its own.
+    """
     gross = unit.order.gross_paise
     commission_bps = unit.rate_card.commission_bps if unit.rate_card is not None else unit.intent.commission_rate_applied_bps
     commission = apply_bps(gross, commission_bps)
     mdr = sum_paise(p.fee_paise for p in unit.payments)
-    expected_transfer = gross - commission - mdr
+    return gross - commission - mdr
 
+
+def compute_expected_net(unit: SettlementUnit, ctx: CheckContext) -> int:
+    expected_transfer = expected_transfer_paise(unit)
     refund_total = sum_paise(r.amount_paise for r in unit.refunds)
     dispute_total = sum_paise(d.deducted_amount_paise for d in unit.disputes)
     debit = min(refund_total + dispute_total, expected_transfer)
