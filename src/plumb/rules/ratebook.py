@@ -8,9 +8,20 @@ Predecessor rates (the 1% TDS and 1% TCS rates that preceded the current
 dates but not when the predecessor rates themselves started, and that is
 not a fact to guess or web-search mid-build. A query for a pre-transition
 date correctly raises NoApplicableRate rather than returning a guessed
-number. GST_ON_FEES (PRD §5.3, 18%) has the same gap -- no sourced
-effective_from in PRD -- so the RateKind exists but no rule is registered
-for it yet; it gets a real entry when D08 (P2.10) needs one.
+number.
+
+GST_ON_FEES is registered (_GST_ON_FEES_STANDARD, below), but it is the
+WEAKEST-SOURCED constant in this module. TDS/TCS both carry a documented
+rate CUT pinned to a specific, dated notification (Finance (No. 2) Act
+2024; CBIC Notification 15/2024) -- a transition PRD §5.1/§5.2 states
+explicitly and warns most online sources still get wrong. GST-on-
+financial-services has no comparable transition to anchor against; its
+18% rate and 2017-07-01 effective date were supplied by the repo owner
+directly this session, not independently re-verified against a primary
+source (a CBIC circular or the CGST Act text itself), per PRD §5.5's own
+warning that stale tax sources outnumber current ones on exactly this
+question. Re-verify this citation before trusting it at PRD §5.5's
+pre-submission gate -- it has not yet had the same scrutiny TDS/TCS got.
 """
 
 from dataclasses import dataclass, field
@@ -92,10 +103,30 @@ _TCS_STANDARD = RateRule(
 )
 
 
+_GST_ON_FEES_STANDARD = RateRule(
+    "GST_ON_FEES_STANDARD",
+    1800,
+    basis=Basis.TAXABLE_VALUE,
+    effective_from=date(2017, 7, 1),
+    effective_to=None,
+    provision=(
+        "CGST Act 2017, s.9 read with Notification 11/2017-Central Tax (Rate), "
+        "Sch. II -- financial and related services, 18%"
+    ),
+    legacy_provision=None,
+    source_url=(
+        "PRD §5.3 -- 18% on MDR and platform commission; weakest-sourced "
+        "constant in this module, see module docstring -- re-verify at the "
+        "PRD §5.5 gate before submission"
+    ),
+)
+
+
 def default_ratebook() -> RateBook:
     return RateBook(
         {
             RateKind.TDS: [_TDS_STANDARD],
             RateKind.TCS: [_TCS_STANDARD],
+            RateKind.GST_ON_FEES: [_GST_ON_FEES_STANDARD],
         }
     )

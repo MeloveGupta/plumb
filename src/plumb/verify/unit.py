@@ -196,16 +196,30 @@ def build_units(
             index = group_index_by_order[order_key]
             group = match_result.groups[index]
             match_id = match_ids[index]
-            # `members` is sorted by record_key (build_group), so this is
-            # a deterministic pick, not an arbitrary one. A group can
-            # legitimately carry more than one bank leg -- T2's n:1
-            # batching/1:n splitting means several orders can share one
-            # bank credit, or one order's settlement can span several --
-            # but SettlementUnit.bank_credit is singular per LLD §5.1.
-            # Neither D01 nor D02 reads this field at all, so "the first
-            # attached bank credit" is sufficient for Completeness
-            # classification today; a future check that needs every leg
-            # will need this field widened to a list.
+            # `members` is sorted by build_group, so this pick is
+            # deterministic. A group can legitimately carry more than one
+            # bank leg -- T2's n:1 batching/1:n splitting means several
+            # orders can share one bank credit, or one order's settlement
+            # can span several -- but SettlementUnit.bank_credit is
+            # singular per LLD §5.1.
+            #
+            # CLOSED, not deferred: audited every one of D03-D08's actual
+            # field needs (P2.5 review). D03/D04/D05 read recon_rows/
+            # refunds/disputes/order/intent plus a RateBook lookup -- never
+            # bank_credit. D06 is Transfer-scoped only (an orphaned hold
+            # has no bank leg yet, by definition). D07 is Reversal vs
+            # Refund. D08 ("sum of GST-on-fee across the settlement file
+            # != the period tax invoice", PRD §6) is a batch-wide
+            # aggregate against one external figure, and the GST-on-fee
+            # data itself lives on Payment.tax_paise/SettlementRecon.
+            # tax_paise (already plural list fields here) -- BankCredit
+            # carries no fee/tax field at all, so it was never a candidate
+            # source for D08 either. No defect in the fixed 8-class
+            # taxonomy (CLAUDE.md rule 5) ever dereferences bank_credit's
+            # value for a money computation -- it feeds only _classify()
+            # below, for Completeness (presence/absence). "First sorted
+            # bank leg" is correct and permanent for that purpose; this
+            # field does not need widening to a list.
             bank_keys = [k for k, side in group.members if side == "bank"]
             bank_credit = records.get(bank_keys[0]) if bank_keys else None
         elif order_key in unmatched:

@@ -57,11 +57,23 @@ def test_rate_for_raises_rather_than_defaulting_before_the_documented_start_date
         default_ratebook().rate_for(RateKind.TDS, as_of=date(2020, 1, 1))
 
 
-def test_rate_for_raises_for_a_kind_with_no_registered_rule():
-    # GST_ON_FEES has no sourced effective_from in PRD §5.3 -- deliberately
-    # unregistered rather than guessed. See P0.5 plan notes.
+def test_gst_on_fees_on_taxable_value_hand_computed():
+    rule = default_ratebook().rate_for(RateKind.GST_ON_FEES, as_of=date(2026, 7, 15))
+    assert rule.basis is Basis.TAXABLE_VALUE
+    # GST-on-fees applies to the fee/commission amount itself as the tax
+    # base -- the same shape OrderLine's taxable_paise/gst_paise use
+    # elsewhere -- not a sales-gross or net-of-returns concept.
+    mdr_paise = 10_000  # Rs 100.00 MDR fee is the taxable value here
+    gst_on_fees_paise = apply_bps(mdr_paise, rule.rate_bps)
+    assert gst_on_fees_paise == 1_800  # 18% of Rs 100.00 = Rs 18.00, exact.
+
+
+def test_gst_on_fees_raises_before_gst_itself_commenced():
+    # 2017-07-01 is GST's own launch date under the CGST Act -- a real,
+    # sourced boundary, not an arbitrarily-early placeholder.
     with pytest.raises(NoApplicableRate):
-        default_ratebook().rate_for(RateKind.GST_ON_FEES, as_of=date(2026, 7, 15))
+        default_ratebook().rate_for(RateKind.GST_ON_FEES, as_of=date(2017, 6, 30))
+    assert default_ratebook().rate_for(RateKind.GST_ON_FEES, as_of=date(2017, 7, 1)) is not None
 
 
 def test_basis_is_keyword_only():
