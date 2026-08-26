@@ -548,23 +548,46 @@ def _replace_bank_counterpart(world: World, old_id: str, new_ids: list[str]) -> 
             return
 
 
-def _apply_settlement_messiness(config: GeneratorConfig, rng: Random, ids: IdSequence, world: World) -> None:
-    """PRD §8.2 T2 -- many:1 batching and 1:many splitting. A post-loop
-    pass, run only after every per-order value from the main loop is
-    already fixed: any rng consumption here can never shift an existing
-    order's own output, which is what keeps this safe for every config
-    that doesn't set these rates (both default to 0, so this returns
-    immediately and consumes no rng at all -- config_a.yaml/config_b.yaml
-    and every existing test are untouched).
-
-    settlement_recons are never touched: only the manufactured
-    bank_credit(s) get utr=None, forcing P0 to fall through to P1/P2
-    exactly like the existing single-order unparseable-narration path
-    already does -- this guarantees the feature actually exercises the
-    matcher's fallback passes rather than leaving it to the narration
-    rate's own independent roll.
+def _mark_unresolvable(world: World, bank_credit_id: str) -> None:
+    """PRD §7.7's abstention metrics need a real population of
+    resolvable_from_available_data=False to mean anything --
+    true_counterparts is left alone (the partial bank credit is a real
+    record that genuinely belongs to this order); what's false is
+    whether the order is fully resolvable *from this batch*, which is
+    exactly what this field means and exactly what's true here.
     """
-    if config.settlement_batch_rate_bps == 0 and config.settlement_split_rate_bps == 0:
+    for i, record in enumerate(world.truth_records):
+        if bank_credit_id in record.true_counterparts:
+            world.truth_records[i] = replace(record, resolvable_from_available_data=False)
+            return
+
+
+def _apply_settlement_messiness(config: GeneratorConfig, rng: Random, ids: IdSequence, world: World) -> None:
+    """PRD §8.2 T2 -- many:1 batching, 1:many splitting, and genuine
+    partial settlement. A post-loop pass, run only after every per-order
+    value from the main loop is already fixed: any rng consumption here
+    can never shift an existing order's own output, which is what keeps
+    this safe for every config that doesn't set these rates (all three
+    default to 0, so this returns immediately and consumes no rng at
+    all -- config_a.yaml/config_b.yaml and every existing test are
+    untouched).
+
+    settlement_recons are never touched by batching/splitting: only the
+    manufactured bank_credit(s) get utr=None, forcing P0 to fall through
+    to P1/P2 exactly like the existing single-order unparseable-narration
+    path already does -- this guarantees the feature actually exercises
+    the matcher's fallback passes rather than leaving it to the
+    narration rate's own independent roll. In-flight settlements force
+    utr=None for a sharper reason: P0 joins on identifier equality alone
+    and never checks amounts, so a genuinely parseable UTR on a partial
+    credit would let P0 silently commit a full match on partial money --
+    a real false negative in the test corpus, not a matching puzzle.
+    """
+    if (
+        config.settlement_batch_rate_bps == 0
+        and config.settlement_split_rate_bps == 0
+        and config.settlement_in_flight_rate_bps == 0
+    ):
         return
 
     # (recon, bank_credit) pairs, in creation order -- both lists grow
@@ -599,35 +622,50 @@ def _apply_settlement_messiness(config: GeneratorConfig, rng: Random, ids: IdSeq
             continue
 
         for _, bc in group:
-            if not _roll(rng, config.settlement_split_rate_bps):
+            if _roll(rng, config.settlement_split_rate_bps):
+                first_amount = bc.amount_paise // 2
+                second_amount = bc.amount_paise - first_amount
+                first_id = ids.next("bank")
+                second_id = ids.next("bank")
+                second_date = min(
+                    datetime.strptime(bc.credited_on, "%Y-%m-%d").replace(tzinfo=UTC)
+                    + timedelta(days=rng.randint(0, DEFAULT_V1.date_window_days)),
+                    _batch_end(config),
+                )
+                _, first_narration, _ = generate_settlement_reference(rng, 10_000)
+                _, second_narration, _ = generate_settlement_reference(rng, 10_000)
+                new_bank_credits.append(
+                    BankCredit(
+                        bank_credit_id=first_id, bank_ref=f"RAZP{first_id.split('_')[1]}", utr=None,
+                        amount_paise=first_amount, credited_on=bc.credited_on,
+                        narration=first_narration,
+                    )
+                )
+                new_bank_credits.append(
+                    BankCredit(
+                        bank_credit_id=second_id, bank_ref=f"RAZP{second_id.split('_')[1]}", utr=None,
+                        amount_paise=second_amount, credited_on=_iso_date(second_date),
+                        narration=second_narration,
+                    )
+                )
+                consumed.add(bc.bank_credit_id)
+                _replace_bank_counterpart(world, bc.bank_credit_id, [first_id, second_id])
                 continue
-            first_amount = bc.amount_paise // 2
-            second_amount = bc.amount_paise - first_amount
-            first_id = ids.next("bank")
-            second_id = ids.next("bank")
-            second_date = min(
-                datetime.strptime(bc.credited_on, "%Y-%m-%d").replace(tzinfo=UTC)
-                + timedelta(days=rng.randint(0, DEFAULT_V1.date_window_days)),
-                _batch_end(config),
-            )
-            _, first_narration, _ = generate_settlement_reference(rng, 10_000)
-            _, second_narration, _ = generate_settlement_reference(rng, 10_000)
-            new_bank_credits.append(
-                BankCredit(
-                    bank_credit_id=first_id, bank_ref=f"RAZP{first_id.split('_')[1]}", utr=None,
-                    amount_paise=first_amount, credited_on=bc.credited_on,
-                    narration=first_narration,
+
+            # amount_paise==0 means the settlement was already fully
+            # consumed by dispute/refund netting -- there is no "30-70%
+            # of zero" that means anything, so it's not eligible here.
+            if bc.amount_paise > 0 and _roll(rng, config.settlement_in_flight_rate_bps):
+                # 30-70% arrived; a smaller gap would just be a rounding-
+                # level near-miss, which is P3's job, not this one's.
+                arrived_bps = rng.randint(3000, 7000)
+                arrived_amount = apply_bps(bc.amount_paise, arrived_bps)
+                _, narration, _ = generate_settlement_reference(rng, 10_000)
+                new_bank_credits.append(
+                    bc.model_copy(update={"amount_paise": arrived_amount, "utr": None, "narration": narration})
                 )
-            )
-            new_bank_credits.append(
-                BankCredit(
-                    bank_credit_id=second_id, bank_ref=f"RAZP{second_id.split('_')[1]}", utr=None,
-                    amount_paise=second_amount, credited_on=_iso_date(second_date),
-                    narration=second_narration,
-                )
-            )
-            consumed.add(bc.bank_credit_id)
-            _replace_bank_counterpart(world, bc.bank_credit_id, [first_id, second_id])
+                consumed.add(bc.bank_credit_id)
+                _mark_unresolvable(world, bc.bank_credit_id)
 
     world.bank_credits[:] = [bc for bc in world.bank_credits if bc.bank_credit_id not in consumed] + new_bank_credits
 

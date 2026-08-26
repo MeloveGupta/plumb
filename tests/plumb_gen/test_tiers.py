@@ -32,6 +32,7 @@ def test_t1_zeroes_every_matching_difficulty_knob_but_leaves_config_owned_fields
     assert result.unparseable_narration_rate_bps == 0
     assert result.settlement_batch_rate_bps == 0
     assert result.settlement_split_rate_bps == 0
+    assert result.settlement_in_flight_rate_bps == 0
     assert result.format_drift_rate_bps == 0
     assert result.adversarial_pair_count == 0
     # config-owned fields untouched -- T1 is the matching ceiling, not a defect-free tier
@@ -45,6 +46,7 @@ def test_t2_raises_narration_and_enables_batching_split_and_drift():
     assert result.unparseable_narration_rate_bps == 2000
     assert result.settlement_batch_rate_bps > 0
     assert result.settlement_split_rate_bps > 0
+    assert result.settlement_in_flight_rate_bps > 0
     assert result.format_drift_rate_bps > 0
     assert result.adversarial_pair_count == 0
     # config-owned fields untouched
@@ -58,6 +60,7 @@ def test_t3_enables_only_adversarial_pairs():
     assert result.unparseable_narration_rate_bps == 0
     assert result.settlement_batch_rate_bps == 0
     assert result.settlement_split_rate_bps == 0
+    assert result.settlement_in_flight_rate_bps == 0
     assert result.format_drift_rate_bps == 0
     assert result.defects.count_for("D02") == 10  # config-owned, untouched
 

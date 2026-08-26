@@ -93,11 +93,61 @@ def test_adversarial_pair_count_too_large_for_the_batch_raises():
 
 
 @pytest.mark.parametrize("seed", SEEDS)
+def test_in_flight_settlements_are_genuinely_partial_and_unparseable(seed):
+    world = _world(seed=seed, unparseable_narration_rate_bps=0, settlement_in_flight_rate_bps=5000)
+    by_recon = {r.settlement_recon_id: r for r in world.settlement_recons}
+    in_flight = [bc for bc in world.bank_credits if bc.utr is None]
+    assert in_flight  # vacuous otherwise
+
+    for bc in in_flight:
+        suffix = bc.bank_credit_id.split("_")[1]
+        recon = by_recon[f"setl_{suffix}"]
+        net_target = recon.credit_paise - recon.debit_paise
+        assert _extracts_no_utr_pattern(bc.narration)
+        # genuinely partial -- 30-70% of the true net target, never the
+        # full amount (that would just be an ordinary unparseable-
+        # narration case, not this feature)
+        assert 0 < bc.amount_paise < net_target
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_in_flight_settlements_are_marked_unresolvable_in_truth(seed):
+    world = _world(seed=seed, unparseable_narration_rate_bps=0, settlement_in_flight_rate_bps=5000)
+    by_recon = {r.settlement_recon_id: r for r in world.settlement_recons}
+    in_flight_bank_ids = set()
+    for bc in world.bank_credits:
+        if bc.utr is None:
+            suffix = bc.bank_credit_id.split("_")[1]
+            recon = by_recon[f"setl_{suffix}"]
+            if bc.amount_paise < recon.credit_paise - recon.debit_paise:
+                in_flight_bank_ids.add(bc.bank_credit_id)
+    assert in_flight_bank_ids  # vacuous otherwise
+
+    unresolvable_records = [r for r in world.truth_records if not r.resolvable_from_available_data]
+    assert len(unresolvable_records) == len(in_flight_bank_ids)
+    flagged_bank_ids = {
+        bank_id for r in unresolvable_records for bank_id in r.true_counterparts if bank_id.startswith("bank_")
+    }
+    assert flagged_bank_ids == in_flight_bank_ids
+
+
+def test_in_flight_settlement_money_is_not_conserved_by_design():
+    # Unlike batching/splitting, in-flight settlements deliberately break
+    # record-for-record conservation -- part of the true net target is
+    # genuinely absent from this batch, not just present under a
+    # different bank_credit_id.
+    world = _world(seed=42, unparseable_narration_rate_bps=0, settlement_in_flight_rate_bps=5000)
+    total_net_target = sum(r.credit_paise - r.debit_paise for r in world.settlement_recons)
+    total_bank = sum(bc.amount_paise for bc in world.bank_credits)
+    assert total_bank < total_net_target
+
+
+@pytest.mark.parametrize("seed", SEEDS)
 def test_tier_messiness_is_deterministic_for_a_given_seed(seed):
     a = _world(seed=seed, unparseable_narration_rate_bps=2000, settlement_batch_rate_bps=3000,
-               settlement_split_rate_bps=2000, adversarial_pair_count=2)
+               settlement_split_rate_bps=2000, settlement_in_flight_rate_bps=1500, adversarial_pair_count=2)
     b = _world(seed=seed, unparseable_narration_rate_bps=2000, settlement_batch_rate_bps=3000,
-               settlement_split_rate_bps=2000, adversarial_pair_count=2)
+               settlement_split_rate_bps=2000, settlement_in_flight_rate_bps=1500, adversarial_pair_count=2)
     assert [bc.bank_credit_id for bc in a.bank_credits] == [bc.bank_credit_id for bc in b.bank_credits]
     assert [bc.amount_paise for bc in a.bank_credits] == [bc.amount_paise for bc in b.bank_credits]
     assert [r.credit_paise for r in a.settlement_recons] == [r.credit_paise for r in b.settlement_recons]

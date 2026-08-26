@@ -41,6 +41,14 @@ class GeneratorConfig:
     # docstring for why tier and config stay separate axes).
     settlement_batch_rate_bps: int = 0  # T2 -- same-day settlements merge into one shared bank credit (many:1)
     settlement_split_rate_bps: int = 0  # T2 -- one settlement splits across two bank credits (1:many)
+    # T2 -- genuine partial settlement: only a 30-70% fraction of the
+    # money arrives in this batch at all; the rest is still in flight,
+    # not just harder to see (that's settlement_split_rate_bps's job).
+    # Distinct from splitting: PRD §8.2 lists them as separate failure
+    # modes, and the truth record for an affected order is marked
+    # resolvable_from_available_data=False, since the data genuinely
+    # isn't all there yet -- not a matching puzzle to solve.
+    settlement_in_flight_rate_bps: int = 0
     format_drift_rate_bps: int = 0  # T2 -- surface-format variation in the rendered source files
     adversarial_pair_count: int = 0  # T3 -- identical-amount/same-day order pairs, LLD §4.2's ambiguity trap
     # Empty by default -- every batch built so far (P0.6/P0.7) stays clean

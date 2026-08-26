@@ -11,8 +11,19 @@ existing knob that actually determines matching difficulty (LLD
 P1/P2/P3 at all), and P0.7 already established T4 zeroing it
 regardless of config. Every other tier-controlled field
 (settlement_batch_rate_bps, settlement_split_rate_bps,
-format_drift_rate_bps, adversarial_pair_count) is new and tier-only --
-never set via YAML, so there is nothing for config to conflict with.
+settlement_in_flight_rate_bps, format_drift_rate_bps,
+adversarial_pair_count) is new and tier-only -- never set via YAML, so
+there is nothing for config to conflict with.
+
+settlement_split_rate_bps and settlement_in_flight_rate_bps look
+similar but are PRD §8.2's two distinct T2 failure modes, not one
+feature at two settings: splitting always emits both halves of the
+money within the batch (fully resolvable -- P2's job); in-flight
+genuinely withholds a fraction of the money past batch_as_of (not
+resolvable from this batch at all -- resolvable_from_available_data
+=False, first real population for §7.7's abstention metrics). A
+settlement gets at most one of {batched, split, in-flight}, never more
+than one, per world.py's own per-settlement branching.
 
 `defects` is untouched by every tier except T4: T1/T2/T3 paired with
 any config keep that config's own defect mix (defects don't corrupt
@@ -34,6 +45,7 @@ TIER_OVERRIDES: dict[str, dict[str, object]] = {
         "unparseable_narration_rate_bps": 0,
         "settlement_batch_rate_bps": 0,
         "settlement_split_rate_bps": 0,
+        "settlement_in_flight_rate_bps": 0,
         "format_drift_rate_bps": 0,
         "adversarial_pair_count": 0,
     },
@@ -41,6 +53,12 @@ TIER_OVERRIDES: dict[str, dict[str, object]] = {
         "unparseable_narration_rate_bps": 2000,
         "settlement_batch_rate_bps": 2000,
         "settlement_split_rate_bps": 1000,
+        # 15% of settled orders -- a starting estimate from the
+        # order-level auto-match math (any one unresolved leg fails the
+        # whole order), not tuned after seeing a result. See the honest
+        # re-measurement in DEVLOG/HANDOFF for what this actually
+        # produced.
+        "settlement_in_flight_rate_bps": 1500,
         "format_drift_rate_bps": 2000,
         "adversarial_pair_count": 0,
     },
@@ -48,6 +66,7 @@ TIER_OVERRIDES: dict[str, dict[str, object]] = {
         "unparseable_narration_rate_bps": 0,
         "settlement_batch_rate_bps": 0,
         "settlement_split_rate_bps": 0,
+        "settlement_in_flight_rate_bps": 0,
         "format_drift_rate_bps": 0,
         "adversarial_pair_count": 5,
     },
@@ -55,6 +74,7 @@ TIER_OVERRIDES: dict[str, dict[str, object]] = {
         "unparseable_narration_rate_bps": 0,
         "settlement_batch_rate_bps": 0,
         "settlement_split_rate_bps": 0,
+        "settlement_in_flight_rate_bps": 0,
         "format_drift_rate_bps": 0,
         "adversarial_pair_count": 0,
         "defects": InjectionConfig(),
