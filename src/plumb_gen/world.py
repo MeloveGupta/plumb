@@ -29,7 +29,7 @@ settled orders with exactly one thing wrong, which is what keeps
 attribution unambiguous (see the P0.8 plan's point 4).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from random import Random
 
@@ -534,6 +534,171 @@ def _build_order(
         )
 
 
+def _replace_bank_counterpart(world: World, old_id: str, new_ids: list[str]) -> None:
+    """A truth_record's true_counterparts holds record-key strings only
+    -- swapping one bank_credit_id for one-or-two replacements needs no
+    other change. Looked up by scanning rather than a prebuilt index:
+    called at most once per affected order, from a post-loop pass that
+    already knows exactly which order it's touching.
+    """
+    for i, record in enumerate(world.truth_records):
+        if old_id in record.true_counterparts:
+            updated = [c for x in record.true_counterparts for c in ([x] if x != old_id else new_ids)]
+            world.truth_records[i] = replace(record, true_counterparts=updated)
+            return
+
+
+def _apply_settlement_messiness(config: GeneratorConfig, rng: Random, ids: IdSequence, world: World) -> None:
+    """PRD §8.2 T2 -- many:1 batching and 1:many splitting. A post-loop
+    pass, run only after every per-order value from the main loop is
+    already fixed: any rng consumption here can never shift an existing
+    order's own output, which is what keeps this safe for every config
+    that doesn't set these rates (both default to 0, so this returns
+    immediately and consumes no rng at all -- config_a.yaml/config_b.yaml
+    and every existing test are untouched).
+
+    settlement_recons are never touched: only the manufactured
+    bank_credit(s) get utr=None, forcing P0 to fall through to P1/P2
+    exactly like the existing single-order unparseable-narration path
+    already does -- this guarantees the feature actually exercises the
+    matcher's fallback passes rather than leaving it to the narration
+    rate's own independent roll.
+    """
+    if config.settlement_batch_rate_bps == 0 and config.settlement_split_rate_bps == 0:
+        return
+
+    # (recon, bank_credit) pairs, in creation order -- both lists grow
+    # in lockstep, one pair per settled order, so zip is safe here, and
+    # only here: nothing else has touched either list yet.
+    pairs = list(zip(world.settlement_recons, world.bank_credits, strict=True))
+    by_settlement_id: dict[str, list[tuple[SettlementRecon, BankCredit]]] = {}
+    for recon, bank_credit in pairs:
+        by_settlement_id.setdefault(recon.settlement_id, []).append((recon, bank_credit))
+
+    consumed: set[str] = set()
+    new_bank_credits: list[BankCredit] = []
+
+    for group in by_settlement_id.values():
+        if len(group) >= 2 and _roll(rng, config.settlement_batch_rate_bps):
+            total = sum(bc.amount_paise for _, bc in group)
+            merged_id = ids.next("bank")
+            _, narration, _ = generate_settlement_reference(rng, 10_000)  # 10_000 = always the unparseable branch
+            new_bank_credits.append(
+                BankCredit(
+                    bank_credit_id=merged_id,
+                    bank_ref=f"RAZP{merged_id.split('_')[1]}",
+                    utr=None,
+                    amount_paise=total,
+                    credited_on=group[0][1].credited_on,
+                    narration=narration,
+                )
+            )
+            for _, bc in group:
+                consumed.add(bc.bank_credit_id)
+                _replace_bank_counterpart(world, bc.bank_credit_id, [merged_id])
+            continue
+
+        for _, bc in group:
+            if not _roll(rng, config.settlement_split_rate_bps):
+                continue
+            first_amount = bc.amount_paise // 2
+            second_amount = bc.amount_paise - first_amount
+            first_id = ids.next("bank")
+            second_id = ids.next("bank")
+            second_date = min(
+                datetime.strptime(bc.credited_on, "%Y-%m-%d").replace(tzinfo=UTC)
+                + timedelta(days=rng.randint(0, DEFAULT_V1.date_window_days)),
+                _batch_end(config),
+            )
+            _, first_narration, _ = generate_settlement_reference(rng, 10_000)
+            _, second_narration, _ = generate_settlement_reference(rng, 10_000)
+            new_bank_credits.append(
+                BankCredit(
+                    bank_credit_id=first_id, bank_ref=f"RAZP{first_id.split('_')[1]}", utr=None,
+                    amount_paise=first_amount, credited_on=bc.credited_on,
+                    narration=first_narration,
+                )
+            )
+            new_bank_credits.append(
+                BankCredit(
+                    bank_credit_id=second_id, bank_ref=f"RAZP{second_id.split('_')[1]}", utr=None,
+                    amount_paise=second_amount, credited_on=_iso_date(second_date),
+                    narration=second_narration,
+                )
+            )
+            consumed.add(bc.bank_credit_id)
+            _replace_bank_counterpart(world, bc.bank_credit_id, [first_id, second_id])
+
+    world.bank_credits[:] = [bc for bc in world.bank_credits if bc.bank_credit_id not in consumed] + new_bank_credits
+
+
+def _construct_adversarial_pairs(config: GeneratorConfig, rng: Random, ids: IdSequence, world: World) -> None:
+    """PRD §8.2 T3, case 1 -- LLD §4.2's ambiguity trap, built from real
+    generated data: two orders forced to share one settlement's exact
+    (amount, date), both bank credits made unparseable, so P0 cannot
+    resolve either via UTR and P1/P2 must recognise -- not guess --
+    that either order could be the true owner of either bank credit's
+    money. Runs after the main loop, same safety reasoning as
+    _apply_settlement_messiness; must run before that function if both
+    are ever combined, since it relies on settlement_recons/bank_credits
+    still being index-aligned one pair per settled order.
+
+    Record keys never change -- only field values do -- so
+    TruthRecord.true_counterparts needs no patching: each order's own
+    counterpart chain is still, genuinely, its own.
+    """
+    if config.adversarial_pair_count == 0:
+        return
+
+    needed = 2 * config.adversarial_pair_count
+    if len(world.bank_credits) < needed:
+        raise ValueError(
+            f"adversarial_pair_count={config.adversarial_pair_count} needs {needed} settled orders, "
+            f"batch only produced {len(world.bank_credits)}"
+        )
+
+    indices = list(range(len(world.bank_credits)))
+    rng.shuffle(indices)
+    chosen = indices[:needed]
+
+    for k in range(config.adversarial_pair_count):
+        i, j = chosen[2 * k], chosen[2 * k + 1]
+        canonical_bank_credit = world.bank_credits[i]
+        canonical_recon = world.settlement_recons[i]
+
+        # BankCredit/SettlementRecon are frozen pydantic models, not
+        # dataclasses (only TruthRecord is) -- model_copy(update=...) is
+        # their equivalent of dataclasses.replace(). narration must be
+        # regenerated too, not just utr=None: ingest re-derives utr from
+        # the narration *text* independently (LLD §3.2) -- leaving the
+        # original narration in place would still say "UTR:XXXX..." and
+        # ingest would silently re-resolve it, discarding this override.
+        _, i_narration, _ = generate_settlement_reference(rng, 10_000)
+        _, j_narration, _ = generate_settlement_reference(rng, 10_000)
+        world.bank_credits[i] = canonical_bank_credit.model_copy(update={"utr": None, "narration": i_narration})
+        world.bank_credits[j] = world.bank_credits[j].model_copy(
+            update={
+                "amount_paise": canonical_bank_credit.amount_paise,
+                "credited_on": canonical_bank_credit.credited_on,
+                "utr": None,
+                "narration": j_narration,
+            }
+        )
+        # debit_paise reset to 0 on the follower: its own net target must
+        # equal the leader's amount_paise exactly, and the leader's own
+        # debit_paise is already baked into that amount. A minor,
+        # accepted simplification -- this constructs a matching trap,
+        # not a verify-level netting scenario.
+        world.settlement_recons[j] = world.settlement_recons[j].model_copy(
+            update={
+                "credit_paise": canonical_bank_credit.amount_paise,
+                "debit_paise": 0,
+                "settlement_id": canonical_recon.settlement_id,
+                "settled_at_utc": canonical_recon.settled_at_utc,
+            }
+        )
+
+
 def build_world(config: GeneratorConfig) -> World:
     rng = Random(config.seed)
     ids = IdSequence()
@@ -545,5 +710,8 @@ def build_world(config: GeneratorConfig) -> World:
     for i in range(config.batch_size):
         seller = sellers[rng.randrange(len(sellers))]
         _build_order(config, rng, ids, world, seller, assignments.get(i))
+
+    _construct_adversarial_pairs(config, rng, ids, world)
+    _apply_settlement_messiness(config, rng, ids, world)
 
     return world
