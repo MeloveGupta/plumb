@@ -1,10 +1,10 @@
-"""Hand-computed fixtures for domain/money.py's apply_bps.
+"""Hand-computed fixtures for domain/money.py's apply_bps and format_inr.
 
 Every expected value here is computed on paper first, never derived from
-apply_bps itself.
+the function under test itself.
 """
 
-from plumb.domain.money import apply_bps
+from plumb.domain.money import apply_bps, format_inr
 
 
 def test_apply_bps_matches_hand_computed_case_with_no_rounding():
@@ -30,3 +30,31 @@ def test_apply_bps_sign_handling_differs_from_naive_floor_division():
     assert correct == -1
     assert naive == 0
     assert correct != naive
+
+
+def test_format_inr_small_amount():
+    assert format_inr(120_000) == "₹1,200.00"
+
+
+def test_format_inr_under_a_hundred_rupees_no_thousands_separator():
+    assert format_inr(3_000) == "₹30.00"
+    assert format_inr(418) == "₹4.18"
+
+
+def test_format_inr_indian_digit_grouping_past_one_lakh():
+    # 12,000,000 paise = Rs 1,20,000.00 -- Indian grouping (last 3, then
+    # groups of 2): "120000" -> "1" + "20" + "000" -> "1,20,000"
+    assert format_inr(12_000_000) == "₹1,20,000.00"
+
+
+def test_format_inr_matches_the_uiux_brief_mockup_figure():
+    # UIUX_BRIEF §3.1's own mockup: "31 findings  ₹47,300 at risk"
+    assert format_inr(4_730_000) == "₹47,300.00"
+
+
+def test_format_inr_negative_amount_is_signed():
+    assert format_inr(-500) == "-₹5.00"
+
+
+def test_format_inr_zero():
+    assert format_inr(0) == "₹0.00"

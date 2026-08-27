@@ -1,15 +1,24 @@
-"""UIUX_BRIEF.md §3.1 -- CLI run output, v1: L0 (ingest) + L1 (match)
-only. L2 (verify) and L3 (investigate) don't exist yet, so their lines
-aren't rendered here -- this grows as those layers land.
+"""UIUX_BRIEF.md §3.1 -- CLI run output. L0 (ingest) + L1 (match) v1,
+plus L2 (verify)'s summary + on_matched_record sub-line (P2.12). L3
+(investigate) doesn't exist yet, so its line isn't rendered here -- this
+grows as that layer lands.
 
-Pure rendering, not orchestration: takes already-computed counts and a
-MatchResult, returns the formatted block as a string. Generating a real
-run_id and wiring generate -> ingest -> match -> render together belongs
-to a run-orchestration layer that doesn't exist yet (plumb/stub_engine.py's
-own docstring says as much -- "no run-orchestration layer exists yet");
+Pure rendering, not orchestration: takes already-computed counts, a
+MatchResult, and (optionally) verify-layer output, returns the formatted
+block as a string. Generating a real run_id and wiring generate ->
+ingest -> match -> verify -> render together belongs to a run-
+orchestration layer that doesn't exist yet (plumb/stub_engine.py's own
+docstring says as much -- "no run-orchestration layer exists yet");
 LLD §11 lists "CLI argument wiring" as left to judgment, not a design
 decision with lasting consequences, so that wiring is deliberately not
 built here.
+
+L2's `on_matched_record` flag is read straight off each Finding, never
+re-derived here -- UIUX_BRIEF §3.1: "The L2 sub-line is the product's
+argument... Indent it, keep it, never suppress it." Rendered whenever
+`l2_unit_count`/`l2_findings` are given, even when there are zero
+findings -- "never suppress" means always, not only when there's
+something to show.
 
 Money paths stay int paise everywhere in the engine (TRD §2.5), but this
 file is report/ -- the one layer where a float is allowed, and the match
@@ -20,7 +29,9 @@ int counts, never fed back into anything the matcher decides.
 import os
 import sys
 
+from plumb.domain.money import format_inr, sum_paise
 from plumb.match.engine import MatchResult
+from plumb.verify.trace import Finding
 
 _VERIFIED = "\033[38;2;47;95;74m"  # UIUX_BRIEF §2.2 --verified, ledger green
 _VARIANCE = "\033[38;2;168;50;30m"  # UIUX_BRIEF §2.2 --variance, oxide red
@@ -48,6 +59,8 @@ def render_run_summary(
     quarantined: int,
     result: MatchResult,
     reports_dir: str,
+    l2_unit_count: int | None = None,
+    l2_findings: list[Finding] | None = None,
     color: bool | None = None,
 ) -> str:
     """sample_label must be HELD_OUT or IN_SAMPLE (CLAUDE.md rule 11 --
@@ -55,6 +68,12 @@ def render_run_summary(
     metric carries which of the two it is). matched/unmatched are
     derived from `result` directly, never passed separately, so this
     line can never drift from what the matcher actually returned.
+
+    `l2_unit_count`/`l2_findings` are both optional and both-or-neither:
+    omit both to get the original L0/L1-only output (P1.11); pass both
+    to also render L2's summary + on_matched_record sub-line (P2.12).
+    `on_matched_record` is read straight off each Finding -- computed
+    once, at check time, never re-derived here.
     """
     if sample_label not in _VALID_SAMPLE_LABELS:
         raise ValueError(f"sample_label must be one of {_VALID_SAMPLE_LABELS}, got {sample_label!r}")
@@ -81,9 +100,27 @@ def render_run_summary(
         f"    {quarantined} quarantined",
         f"  L1  match          {claimed} matched  {match_pct:.1f}%"
         f"    {unmatched} unmatched",
-        "",
-        ledger_line,
-        "",
-        f"  reports/{run_id}/",
     ]
+
+    if l2_unit_count is not None and l2_findings is not None:
+        total_at_risk = sum_paise(f.amount_at_risk_paise for f in l2_findings)
+        matched_count = sum(1 for f in l2_findings if f.on_matched_record)
+        at_risk_text = f"{format_inr(total_at_risk)} at risk"
+        l2_line = _colored(
+            f"  L2  verify         {l2_unit_count} verified"
+            f"                {len(l2_findings)} findings   {at_risk_text}",
+            _VARIANCE if total_at_risk > 0 else _VERIFIED,
+            enabled,
+        )
+        lines.append(l2_line)
+        lines.append(f"                     └─ {matched_count} findings on MATCHED records")
+
+    lines.extend(
+        [
+            "",
+            ledger_line,
+            "",
+            f"  reports/{run_id}/",
+        ]
+    )
     return "\n".join(lines)
