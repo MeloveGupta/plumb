@@ -32,8 +32,17 @@ class VerifyConfig:
     """Placeholder thresholds -- no spec gives real numbers for these.
     Pick real ones before the panel demo; the mechanism (one config-owned
     function every check calls) is what's being committed to now.
+
+    d06_hold_age_days: comfortably above the legitimate
+    hold_release_days=7 window (plumb_gen/config.py) so an ordinary,
+    still-resolving hold never trips it, and comfortably below D06's own
+    forced 21-day floor (min(hold_release_days + 14, order_lookback_days))
+    so every injected instance is caught with margin either direction.
+    verify/ can't import plumb_gen's config directly (TRD §3.1), so this
+    is its own independent constant, not derived from it.
     """
 
+    d06_hold_age_days: int = 14
     severity_medium_min_paise: Paise = 10_000  # >= Rs 100
     severity_high_min_paise: Paise = 100_000  # >= Rs 1,000
 
