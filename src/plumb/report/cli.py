@@ -124,3 +124,56 @@ def render_run_summary(
         ]
     )
     return "\n".join(lines)
+
+
+_BAR_WIDTH = 16
+_OVERHANG_WIDTH = 4
+
+
+def render_variance_bar(
+    delta_paise: int, band_paise: int, width: int = _BAR_WIDTH, overhang_width: int = _OVERHANG_WIDTH,
+    color: bool | None = None,
+) -> str:
+    """UIUX_BRIEF §2.5 -- the variance bar, confirmed reading (not a
+    transcribed spec formula; the brief gives no exact character-width
+    or overhang-scale number): the solid bar represents the reconciled
+    amount at full scale -- a clean record and an in-band shortfall show
+    the *same* `width` solid blocks, because the money that did arrive
+    is real. The oxide-red overhang is a separately-scaled segment sized
+    by `delta_paise / band_paise` -- how deep into the tolerance band
+    the shortfall sits, not how big it is relative to the order's own
+    gross. `width`/`overhang_width` are implementation choices, easy to
+    retune; report/'s no-float exemption covers the ratio arithmetic.
+
+    `delta_paise <= 0` (reconciled exactly, or overpaid) draws a solid
+    bar with no overhang -- nothing at risk -- padded with `overhang_width`
+    blank spaces so every row's bar is the same total length regardless
+    of whether it has a shortfall, keeping a table of rows aligned.
+    The checkmark/short-amount annotation is `render_variance_row`'s
+    job, not the bar's own -- kept separate so this function is purely
+    "the bar," composable into a row or used on its own.
+    """
+    enabled = _color_enabled() if color is None else color
+    if delta_paise <= 0:
+        return "█" * width + " " * overhang_width
+
+    fraction = min(1.0, delta_paise / band_paise) if band_paise else 1.0
+    overhang_chars = round(fraction * overhang_width)
+    overhang = _colored("▏" * overhang_chars, _VARIANCE, enabled)
+    gap = " " * (overhang_width - overhang_chars)
+    return "█" * width + overhang + gap
+
+
+def render_variance_row(
+    defect_label: str, order_id: str, delta_paise: int, band_paise: int, color: bool | None = None,
+) -> str:
+    """One row of the variance-bar table -- UIUX_BRIEF §2.5's mockup:
+    `D01  ord_00042   <bar>   ₹  30.00 short` / a clean record's
+    `     ord_00088   <bar>   ✓` (blank defect_label). One row per
+    record, box-drawing characters in the CLI (unicode in reports, SVG
+    in The Ledger -- "one idea, three renderings"; only the CLI
+    rendering is built here).
+    """
+    bar = render_variance_bar(delta_paise, band_paise, color=color)
+    tail = "✓" if delta_paise <= 0 else f"{format_inr(delta_paise)} short"
+    return f"{defect_label:<3}  {order_id}   {bar}   {tail}"
