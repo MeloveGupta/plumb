@@ -18,6 +18,7 @@ from plumb.domain.models import (
     SettlementRecon,
     Transfer,
 )
+from plumb.verify.trace import reevaluate_trace
 from plumb.match.engine import MatchGroup, MatchResult
 
 _RULE_ID = {"P0": "ID_CHAIN", "P1": "EXACT_COMPOSITE", "P2": "GROUP_SUBSET_SUM", "P3": "TOL_BAND"}
@@ -116,3 +117,12 @@ def match_group(pass_, members):
 
 def match_result(groups=(), unmatched=(), ambiguous=()):
     return MatchResult(groups=tuple(groups), unmatched=tuple(unmatched), ambiguous=tuple(ambiguous))
+
+
+def assert_trace_reevaluates(finding):
+    """P2.11/LLD §5.4 -- every step in a real Finding's trace must
+    re-evaluate to its own recorded output_paise. Wired into each
+    check's own "fires" test(s) so a check that produces a trace no
+    evaluator can re-derive is caught immediately, not just described
+    as a property in a docstring."""
+    reevaluate_trace(finding.trace)

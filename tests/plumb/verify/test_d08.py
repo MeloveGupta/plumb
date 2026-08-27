@@ -12,7 +12,7 @@ from plumb.verify.registry import CheckContext
 from plumb.verify.trace import VerifyConfig
 from plumb.verify.unit import Completeness, SettlementUnit
 
-from _verify_fixtures import intent, order, payment
+from _verify_fixtures import assert_trace_reevaluates, intent, order, payment
 
 _CHECK = D08GstOnFeeRateError()
 _CTX = CheckContext(ratebook=default_ratebook(), tolerance=DEFAULT_V1, as_of=date(2026, 7, 1), config=VerifyConfig())
@@ -39,6 +39,7 @@ def test_wrong_gst_slab_fires_with_the_exact_delta():
     assert finding is not None
     assert finding.defect_id == "D08"
     assert finding.amount_at_risk_paise == 600
+    assert_trace_reevaluates(finding)
 
 
 def test_correct_gst_does_not_fire():

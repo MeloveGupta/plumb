@@ -72,14 +72,14 @@ class D04TcsBasisError:
             TraceBuilder()
             .step(
                 "net_of_returns",
-                "gross_paise - sum(refunds)",
+                "gross_paise - refund_total",
                 {"gross_paise": gross, "refund_total": refund_total},
                 net_of_returns,
             )
             .step(
                 "expected_tcs",
-                f"net_of_returns * {rate.rate_bps}bps / 10000 (round-half-up)",
-                {"net_of_returns": net_of_returns},
+                "(net_of_returns * rate_bps + 5000) // 10000",
+                {"net_of_returns": net_of_returns, "rate_bps": rate.rate_bps},
                 expected_tcs,
             )
             .step("delta", "abs(applied_tcs - expected_tcs)", {"applied_tcs": applied_tcs, "expected_tcs": expected_tcs}, delta)

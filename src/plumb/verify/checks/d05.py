@@ -61,8 +61,8 @@ class D05TdsRateOrBasisError:
             TraceBuilder()
             .step(
                 "expected_tds",
-                f"gross_paise * {rate.rate_bps}bps / 10000 (round-half-up)",
-                {"gross_paise": gross},
+                "(gross_paise * rate_bps + 5000) // 10000",
+                {"gross_paise": gross, "rate_bps": rate.rate_bps},
                 expected_tds,
             )
             .step("delta", "abs(applied_tds - expected_tds)", {"applied_tds": applied_tds, "expected_tds": expected_tds}, delta)

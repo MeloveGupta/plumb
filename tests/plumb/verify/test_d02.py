@@ -19,7 +19,7 @@ from plumb.verify.registry import CheckContext
 from plumb.verify.trace import VerifyConfig
 from plumb.verify.unit import Completeness, SettlementUnit
 
-from _verify_fixtures import dispute, intent, order, payment, rate_card, recon, refund
+from _verify_fixtures import assert_trace_reevaluates, dispute, intent, order, payment, rate_card, recon, refund
 
 _CHECK = D02ShortSettlementInTolerance()
 _CTX = CheckContext(ratebook=default_ratebook(), tolerance=DEFAULT_V1, as_of=date(2026, 7, 1), config=VerifyConfig())
@@ -58,6 +58,7 @@ def test_in_band_shortfall_fires():
     assert finding.defect_id == "D02"
     assert finding.amount_at_risk_paise == 500
     assert finding.on_matched_record is True
+    assert_trace_reevaluates(finding)
 
 
 def test_out_of_band_shortfall_does_not_fire():
@@ -92,6 +93,7 @@ def test_missing_bank_with_a_genuine_shortfall_still_fires():
 
     assert finding is not None
     assert finding.amount_at_risk_paise == 500
+    assert_trace_reevaluates(finding)
 
 
 def test_refund_and_dispute_are_netted_before_comparison():

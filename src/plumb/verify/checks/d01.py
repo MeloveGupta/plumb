@@ -57,13 +57,13 @@ class D01CommissionRateDrift:
             TraceBuilder()
             .step(
                 "contracted_commission",
-                "gross_paise * contracted_bps / 10000 (round-half-up)",
+                "(gross_paise * contracted_bps + 5000) // 10000",
                 {"gross_paise": gross, "contracted_bps": contracted_bps},
                 contracted_commission,
             )
             .step(
                 "applied_commission",
-                "gross_paise * applied_bps / 10000 (round-half-up)",
+                "(gross_paise * applied_bps + 5000) // 10000",
                 {"gross_paise": gross, "applied_bps": applied_bps},
                 applied_commission,
             )

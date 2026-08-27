@@ -46,23 +46,52 @@ from plumb.verify.trace import EvidenceRef, Finding, TraceBuilder, classify_seve
 from plumb.verify.unit import Completeness, SettlementUnit
 
 
-def expected_transfer_paise(unit: SettlementUnit) -> int:
+def expected_transfer_paise(unit: SettlementUnit, trace: TraceBuilder | None = None) -> int:
     """gross - commission - mdr, before any refund/dispute netting.
     Shared with d03.py, which needs this pre-debit figure on its own.
+    `trace`, when given, records each intermediate as its own
+    re-evaluatable step (P2.11) instead of compressing them into one
+    formula no evaluator could literally execute.
     """
     gross = unit.order.gross_paise
     commission_bps = unit.rate_card.commission_bps if unit.rate_card is not None else unit.intent.commission_rate_applied_bps
     commission = apply_bps(gross, commission_bps)
+    if trace is not None:
+        trace.step(
+            "commission",
+            "(gross_paise * commission_bps + 5000) // 10000",
+            {"gross_paise": gross, "commission_bps": commission_bps},
+            commission,
+        )
+
     mdr = sum_paise(p.fee_paise for p in unit.payments)
-    return gross - commission - mdr
+    expected_transfer = gross - commission - mdr
+    if trace is not None:
+        trace.step(
+            "expected_transfer",
+            "gross_paise - commission - mdr",
+            {"gross_paise": gross, "commission": commission, "mdr": mdr},
+            expected_transfer,
+        )
+    return expected_transfer
 
 
-def compute_expected_net(unit: SettlementUnit, ctx: CheckContext) -> int:
-    expected_transfer = expected_transfer_paise(unit)
+def compute_expected_net(unit: SettlementUnit, ctx: CheckContext, trace: TraceBuilder | None = None) -> int:
+    expected_transfer = expected_transfer_paise(unit, trace)
     refund_total = sum_paise(r.amount_paise for r in unit.refunds)
     dispute_total = sum_paise(d.deducted_amount_paise for d in unit.disputes)
     debit = min(refund_total + dispute_total, expected_transfer)
-    return expected_transfer - debit
+    if trace is not None:
+        trace.step(
+            "debit",
+            "min(refund_total + dispute_total, expected_transfer)",
+            {"refund_total": refund_total, "dispute_total": dispute_total, "expected_transfer": expected_transfer},
+            debit,
+        )
+    expected = expected_transfer - debit
+    if trace is not None:
+        trace.step("expected_net", "expected_transfer - debit", {"expected_transfer": expected_transfer, "debit": debit}, expected)
+    return expected
 
 
 class D02ShortSettlementInTolerance:
@@ -73,8 +102,11 @@ class D02ShortSettlementInTolerance:
         return bool(unit.recon_rows)
 
     def run(self, unit: SettlementUnit, ctx: CheckContext) -> Finding | None:
-        expected = compute_expected_net(unit, ctx)
-        actual = sum_paise(r.credit_paise - r.debit_paise for r in unit.recon_rows)
+        trace_builder = TraceBuilder()
+        expected = compute_expected_net(unit, ctx, trace_builder)
+        total_credit_paise = sum_paise(r.credit_paise for r in unit.recon_rows)
+        total_debit_paise = sum_paise(r.debit_paise for r in unit.recon_rows)
+        actual = total_credit_paise - total_debit_paise
         delta = expected - actual
 
         if delta <= 0:
@@ -83,20 +115,13 @@ class D02ShortSettlementInTolerance:
             return None  # outside the band -- already caught by the matcher, not a silent break
 
         trace = (
-            TraceBuilder()
-            .step(
-                "expected_net",
-                "gross_paise - commission - mdr - min(refund+dispute, expected_transfer)",
-                {"gross_paise": unit.order.gross_paise},
-                expected,
-            )
-            .step(
+            trace_builder.step(
                 "actual_net",
-                "sum(recon.credit_paise - recon.debit_paise)",
-                {"recon_rows": len(unit.recon_rows)},
+                "total_credit_paise - total_debit_paise",
+                {"total_credit_paise": total_credit_paise, "total_debit_paise": total_debit_paise},
                 actual,
             )
-            .step("delta", "expected_net - actual_net", {"expected": expected, "actual": actual}, delta)
+            .step("delta", "expected_net - actual_net", {"expected_net": expected, "actual_net": actual}, delta)
             .conclude(
                 f"order {unit.order.order_id}: expected net {expected} paise vs actual {actual} paise, "
                 f"short by {delta} paise, inside tolerance band {ctx.tolerance.band_paise(expected)} paise"

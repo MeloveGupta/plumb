@@ -11,7 +11,7 @@ from plumb.verify.registry import CheckContext
 from plumb.verify.trace import VerifyConfig
 from plumb.verify.unit import Completeness, SettlementUnit
 
-from _verify_fixtures import intent, order, payment, transfer
+from _verify_fixtures import assert_trace_reevaluates, intent, order, payment, transfer
 
 _CHECK = D06OrphanedHold()
 _CTX = CheckContext(ratebook=default_ratebook(), tolerance=DEFAULT_V1, as_of=date(2026, 7, 20), config=VerifyConfig())
@@ -37,6 +37,7 @@ def test_orphaned_hold_aged_beyond_threshold_fires():
     assert finding is not None
     assert finding.defect_id == "D06"
     assert finding.amount_at_risk_paise == 50_000
+    assert_trace_reevaluates(finding)
 
 
 def test_orphaned_hold_not_yet_aged_does_not_fire():

@@ -16,7 +16,7 @@ from plumb.verify.registry import CheckContext
 from plumb.verify.trace import VerifyConfig
 from plumb.verify.unit import Completeness, SettlementUnit
 
-from _verify_fixtures import intent, order, payment, rate_card, recon, refund
+from _verify_fixtures import assert_trace_reevaluates, intent, order, payment, rate_card, recon, refund
 
 _D03 = D03RefundNettingError()
 _D02 = D02ShortSettlementInTolerance()
@@ -48,6 +48,7 @@ def test_under_netted_refund_fires_with_the_full_missing_amount():
     assert finding.defect_id == "D03"
     assert finding.amount_at_risk_paise == 50_000
     assert finding.on_matched_record is True
+    assert_trace_reevaluates(finding)
 
 
 def test_correctly_netted_refund_does_not_fire():

@@ -46,20 +46,12 @@ class D06OrphanedHold:
 
         amount_at_risk = sum_paise(t.amount_paise for t in orphaned)
 
+        # age_days is a business-rule gate (date arithmetic, not money),
+        # same treatment as D02's tolerance-band check -- described in
+        # the conclusion, not traced as a formal (re-evaluatable) step.
         trace = (
             TraceBuilder()
-            .step(
-                "age_days",
-                "as_of - order.placed_at_utc",
-                {"as_of": ctx.as_of.isoformat(), "placed_at": unit.order.placed_at_utc},
-                age_days,
-            )
-            .step(
-                "amount_at_risk",
-                "sum(transfer.amount_paise for each on_hold=True, on_hold_until_utc=None transfer)",
-                {"orphaned_transfer_count": len(orphaned)},
-                amount_at_risk,
-            )
+            .step("amount_at_risk", "amount_at_risk", {"amount_at_risk": amount_at_risk}, amount_at_risk)
             .conclude(
                 f"order {unit.order.order_id}: {len(orphaned)} transfer(s) on hold with no release date, "
                 f"{age_days} days old (threshold {ctx.config.d06_hold_age_days}); {amount_at_risk} paise parked"

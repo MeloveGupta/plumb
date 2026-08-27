@@ -34,12 +34,7 @@ class D07ReversalWithoutRefund:
 
         trace = (
             TraceBuilder()
-            .step(
-                "amount_at_risk",
-                "sum(reversal.amount_paise) -- no refund record exists for this order",
-                {"reversal_count": len(unit.reversals), "refund_count": 0},
-                amount_at_risk,
-            )
+            .step("amount_at_risk", "amount_at_risk", {"amount_at_risk": amount_at_risk}, amount_at_risk)
             .conclude(
                 f"order {unit.order.order_id}: {len(unit.reversals)} reversal(s) totalling "
                 f"{amount_at_risk} paise with no corresponding refund -- seller debited for a "

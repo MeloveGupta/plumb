@@ -52,15 +52,40 @@ class D03RefundNettingError:
         return bool(unit.recon_rows) and bool(unit.refunds)
 
     def run(self, unit: SettlementUnit, ctx: CheckContext) -> Finding | None:
-        pre_debit_transfer = expected_transfer_paise(unit)
+        trace_builder = TraceBuilder()
+        pre_debit_transfer = expected_transfer_paise(unit, trace_builder)
         refund_total = sum_paise(r.amount_paise for r in unit.refunds)
         dispute_total = sum_paise(d.deducted_amount_paise for d in unit.disputes)
 
         # Mirrors world.py's own clamp order exactly: dispute nets first,
         # refund is clamped against what's left.
         expected_dispute_debit = min(dispute_total, pre_debit_transfer)
+        trace_builder.step(
+            "expected_dispute_debit",
+            "min(dispute_total, pre_debit_transfer)",
+            {"dispute_total": dispute_total, "pre_debit_transfer": pre_debit_transfer},
+            expected_dispute_debit,
+        )
+
         expected_refund_debit = max(0, min(refund_total, pre_debit_transfer - expected_dispute_debit))
+        trace_builder.step(
+            "expected_refund_debit",
+            "max(0, min(refund_total, pre_debit_transfer - expected_dispute_debit))",
+            {
+                "refund_total": refund_total,
+                "pre_debit_transfer": pre_debit_transfer,
+                "expected_dispute_debit": expected_dispute_debit,
+            },
+            expected_refund_debit,
+        )
+
         expected_debit = expected_dispute_debit + expected_refund_debit
+        trace_builder.step(
+            "expected_debit",
+            "expected_dispute_debit + expected_refund_debit",
+            {"expected_dispute_debit": expected_dispute_debit, "expected_refund_debit": expected_refund_debit},
+            expected_debit,
+        )
 
         actual_debit = sum_paise(r.debit_paise for r in unit.recon_rows)
         delta = expected_debit - actual_debit
@@ -69,21 +94,8 @@ class D03RefundNettingError:
             return None  # correctly netted, or the unimplemented "netted twice" shape
 
         trace = (
-            TraceBuilder()
-            .step(
-                "pre_debit_transfer",
-                "gross_paise - commission - mdr (shared with D02)",
-                {"gross_paise": unit.order.gross_paise},
-                pre_debit_transfer,
-            )
-            .step(
-                "expected_debit",
-                "min(dispute_total, pre_debit_transfer) + min(refund_total, pre_debit_transfer - dispute_debit)",
-                {"refund_total": refund_total, "dispute_total": dispute_total},
-                expected_debit,
-            )
-            .step("actual_debit", "sum(recon.debit_paise)", {"recon_rows": len(unit.recon_rows)}, actual_debit)
-            .step("delta", "expected_debit - actual_debit", {"expected": expected_debit, "actual": actual_debit}, delta)
+            trace_builder.step("actual_debit", "actual_debit", {"actual_debit": actual_debit}, actual_debit)
+            .step("delta", "expected_debit - actual_debit", {"expected_debit": expected_debit, "actual_debit": actual_debit}, delta)
             .conclude(
                 f"order {unit.order.order_id}: refund/dispute netting expected {expected_debit} paise debit, "
                 f"settlement_recon reflects only {actual_debit} paise -- under-netted by {delta} paise"

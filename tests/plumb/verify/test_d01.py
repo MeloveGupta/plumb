@@ -14,7 +14,7 @@ from plumb.verify.registry import CheckContext
 from plumb.verify.trace import VerifyConfig
 from plumb.verify.unit import Completeness, SettlementUnit
 
-from _verify_fixtures import intent, order, rate_card
+from _verify_fixtures import assert_trace_reevaluates, intent, order, rate_card
 
 _CHECK = D01CommissionRateDrift()
 _CTX = CheckContext(ratebook=default_ratebook(), tolerance=DEFAULT_V1, as_of=date(2026, 7, 1), config=VerifyConfig())
@@ -47,6 +47,7 @@ def test_drift_caught_with_the_exact_delta():
     assert finding.defect_id == "D01"
     assert finding.amount_at_risk_paise == 2_000
     assert finding.on_matched_record is True
+    assert_trace_reevaluates(finding)
 
 
 def test_intent_only_unit_still_supports_d01():
@@ -59,6 +60,7 @@ def test_intent_only_unit_still_supports_d01():
     assert finding is not None
     assert finding.amount_at_risk_paise == 2_000
     assert finding.on_matched_record is False
+    assert_trace_reevaluates(finding)
 
 
 def test_bps_mismatch_that_rounds_to_the_same_paise_figure_does_not_fire():
