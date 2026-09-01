@@ -1,4 +1,4 @@
-# Handoff — end of the P2 session (verify layer complete, GATE P2 met)
+# Handoff — end of the P3.1–P3.7 session (L3 agent machinery complete)
 
 Written for a fresh session that has the seven specs and the committed
 code, but not the conversation that produced them.
@@ -7,188 +7,181 @@ code, but not the conversation that produced them.
 
 ## 1. Where things stand
 
-**GATE P0 met, P1 complete** — unchanged from the last two handoffs.
+**GATE P0 met, P1 complete, P2 complete, GATE P2 met** — unchanged.
 
-**P2 is complete. GATE P2 is met.** `verify/` now has: `SettlementUnit`
-builder + `Completeness` classification (P2.1), the `Check`
-protocol/registry (P2.2), all eight checks D01–D08 (P2.3–P2.10), a real
-re-evaluation mechanism for `recompute_trace` (P2.11, §5 below), the
-`on_matched_record` CLI line (P2.12), and the variance bar (P2.14).
+**P3.1–P3.7 are complete.** `src/plumb/agent/` now has the whole
+single-exception investigation machinery, built and tested entirely
+in-memory (same posture as P2's checks — no `run.sqlite` round trip):
 
-**GATE P2's real numbers**, measured on `config_b`/T2 (HELD_OUT — see
-§7 below for why this needed its own measurement pass), 5 canonical
-seeds, via the real `plumb_eval.scoring.score_defects` function (not a
-hand-rolled comparison):
+| module | what |
+|---|---|
+| `agent/config.py` | `AgentConfig` — frozen Pydantic, the four thresholds |
+| `agent/schema.py` | `StopReason`, `EvidenceRef`, `Hypothesis`, `Resolution` + its code-enforced invariants; `Resolution.downgrade()` |
+| `agent/evidence.py` | `EvidenceStore` (the 7 tools' read-only backing store) + `RecordIndex` (fabrication-gate source of truth), both from `run_ingest()` output |
+| `agent/tools.py` | `Toolbox` — the 7 PRD §10.3 tools, `invoke()` dispatch with degrade-to-`ToolFailure`, `AgentCall` audit records |
+| `agent/prompts/` | `system.md` + `load_prompts()` → text + content-sensitive `sha256` |
+| `agent/model.py` | `ModelClient` protocol; `ScriptedClient` (test double); `AnthropicClient` (live, never in CI) |
+| `agent/loop.py` | `InvestigationState`, `investigate()` — LLD §7.2's loop; `forced_escalation()`, `grounding_refs()`, `SUBMIT_SCHEMA` |
+| `agent/gates.py` | `apply_downgrade_gate()`, `assert_evidence_resolves()` |
+| `agent/queue.py` | `Exception_`, `build_exception_queue()` — ranked rupees-descending |
+| `agent/runner.py` | `run_investigation()` — works the queue, applies gates in fixed order; `ablation="rules_only"` bypass; optional `batch_token_budget` |
 
-| | seed 1 | seed 2 | seed 3 | seed 7 | seed 42 |
-|---|---|---|---|---|---|
-| defect_recall | 55/56 | 55/56 | 55/56 | 56/56 | 56/56 |
+`anthropic` is now a locked dependency (imported lazily, only by
+`AnthropicClient`). Full suite green (474 passed), CI green with no API
+key — every loop test uses `ScriptedClient`, nothing hits the network.
 
-98.2%–100%, mean ~98.9%, well clear of the 80% gate. `defect_precision`
-and `root_cause_accuracy` are both 100% on every seed. Committed as
-`tests/plumb_eval/test_gate_p2_real_batch.py` — a real regression test,
-not a one-off number in this doc.
-
-**P3 (the agent) is next.** GATE P3 is the architecture pass/fail for
-the whole submission: `hybrid` must beat `rules_only` on residual
-resolution, or the honest negative gets shipped and written up plainly
-— see PRD/IMPLEMENTATION_PLAN §5's own framing, unchanged by anything
-this session did.
+**Next: the L3 persistence bridge, then P3.8–P3.12.** See §2.
 
 ---
 
-## 2. The recurring pattern: three times, the generator was wrong, not the check
+## 2. The persistence bridge is the next task, and it is real work (~5–6h)
 
-Writing a real check against real generated data found a genuine
-generator bug three separate times this build, not once:
+Deliberately deferred this session (with the user's sign-off). Nothing
+in L3 writes `run.sqlite` yet. Before P3.8 (ablation) can run — it needs
+a real `run.sqlite` for `plumb_eval.scorer.score_run` — someone must
+build:
 
-1. **D03 (P0.8)** — clean data's refund-netting step was silently
-   skipped for the wrong condition, producing a phantom shortfall.
-2. **An unclamped dispute deduction (P0.8)** — could push
-   `bank_credit.amount_paise` negative; found by scanning real batches,
-   not by inspection.
-3. **D04 (this session)** — `world.py` computed TCS on gross *before*
-   an order's own organic refund was decided, so a clean order that
-   rolled a refund kept gross-basis TCS forever, violating the tax law
-   D04 exists to check. This produced a measured 35% D04 precision
-   (6 true positives / 11 false positives) on real data — not accepted
-   as a documented limitation, root-caused with three independent
-   pieces of evidence (the generator's own comment admitting the
-   unfinished intent; PRD §5.2's literal text; the check's own
-   arithmetic already matching every forced-refund case exactly), then
-   fixed with a post-loop correction pass
-   (`_correct_tcs_for_organic_refunds`) rather than reordering
-   `_build_order`'s RNG draws. **D04 precision: 35% → 100%** on the
-   same real batch, confirmed after the fix, zero test breakage, zero
-   `plumb_eval` scoring interaction (checked before touching anything).
+- `store/writer.py`: `write_settlement_unit`, `write_finding`,
+  `write_recompute_step`, `write_finding_evidence` (P2's gap, still
+  open), plus `write_exception`, `write_hypothesis`, `write_agent_call`,
+  `write_resolution`, `write_resolution_evidence`, `write_record_index`,
+  `write_record_terminal_state`, and the `run` row + `config_snapshot`.
+- **`record_index` population** — every canonical record key, so the
+  `exception.record_key` / `resolution_evidence.record_key` FKs resolve.
+  `RecordIndex.from_ingest` already enumerates exactly this set; the
+  writer walks the same records.
+- **id reconciliation**: `build_exception_queue` takes
+  `(finding_id, Finding)` pairs — the bridge writes findings first,
+  gets their ids, then builds the queue. `Resolution.chosen_hypothesis_index`
+  (int, in-memory) → `resolution.chosen_hypothesis_id` (FK): the bridge
+  writes hypotheses, then maps.
+- **the manifest writer** — `stub_engine.py` is the only current one and
+  says so. It owns `prompt_sha256` (from `load_prompts().sha256`),
+  `engine_config_sha256` (from `AgentConfig` — LLD §10's
+  `PlumbConfig.sha256()` shape), `llm_model`, `llm_temperature` (from
+  `model.TEMPERATURE`).
+- **the orchestration CLI** — `plumb run --data <batch> --config <cfg>`,
+  the L0→L4 chain that today exists only inside
+  `tests/plumb_eval/test_gate_p2_real_batch.py` and
+  `tests/plumb/agent/test_runner_integration.py`. `report/cli.py` gains
+  an `L3 investigate` line.
+- `record_model_turn` writes one `agent_call` per model turn carrying
+  that turn's full token usage; per-tool rows carry 0. So
+  `SUM(tokens_in + tokens_out)` over `agent_call` == true API usage.
+  The bridge must preserve that when it writes the rows.
 
-**Relevant to P3, not just a war story**: when the agent's own
-recompute disagrees with recorded data, "the data is wrong" has to be a
-real, first-class hypothesis in the investigation loop and its prompts
-— not a fallback reached only after exhausting "the check is wrong."
-Three real generator bugs surfaced exactly because someone treated a
-disagreement as informative rather than assuming the recorded number
-was ground truth. Design P3's abstention/escalation logic (and its
-prompts) so a confident "this input looks wrong, not my recompute" is
-representable and doesn't get silently smoothed over into a low-
-confidence resolution.
-
----
-
-## 3. D08 is narrow by design, not by time pressure — `BatchCheck` is retired
-
-PRD §6 describes D08 as settlement-file-vs-tax-invoice reconciliation —
-two independently-sourced documents that could disagree. Built instead
-as a per-unit rate-correctness check (`verify/checks/d08.py`), same
-shape as D01/D04/D05: recompute GST-on-MDR per payment via the
-registered `GST_ON_FEES` rate, compare against `Payment.tax_paise`.
-`# PRD-DEVIATION:` comment in the module states plainly what this does
-NOT catch: an invoice that's wrong independent of the settlement file.
-
-**Why, precisely — not just "ran out of time"**: the literal version
-costs ~7-9h (a genuinely new ingested artifact: new domain model, new
-adapter or an extension to `RazorpayAdapter`, a schema change to
-`source_file.source_id`'s CHECK constraint, plus a `BatchCheck`
-protocol and its own registry). But `d08_wrong_tax_paise` (the only
-D08 injector that exists) only ever corrupts a per-payment figure —
-nothing in the generator can make "the invoice" wrong independent of
-the settlement file. A genuinely separate invoice artifact would add
-**zero detection power** over recomputing the correct total directly,
-given what the generator can currently inject. The expensive version
-buys nothing today; it only would once the generator can also corrupt
-an invoice independently of the settlement file, which is separate,
-unscoped work.
-
-**`BatchCheck` (the protocol proposed for the literal version) was
-retired, not built.** Don't revive it without first giving the
-generator a way to make an invoice wrong on its own — otherwise it's
-infrastructure for a defect that can't currently exist in the test
-corpus.
+`plumb_eval` already reads `exception`, `resolution` (as `ResolutionRow`
+— only `exception_id`/`outcome`/`stop_reason`), and `agent_call`
+aggregates. `score_abstentions` already consumes `run.resolutions` for
+the `CORRECT_ABSTENTION`/`OVER_ABSTENTION` split.
+`CORRECT_RESOLUTION`/`WRONG_RESOLUTION` are still not scored (no
+proposed-correction amount in the schema — separate, unscoped).
 
 ---
 
-## 4. The one recurring miss: ambiguous seller name — not a bug
+## 3. Deviations added this session (all carry `# *-DEVIATION:` comments)
 
-Across this session's real-batch verification (D01 fixtures, D04
-re-verification, and the GATE P2 measurement — 25 seed-runs total),
-every single miss is the same known, deliberate fixture:
-`intent.py::_resolve_seller_id`'s ambiguous-name collision (two seller
-ids sharing one display name — "Sharma Electronics" in this build's
-fixture data). When it fires, `Order.seller_id` stays the raw name
-string, no `SellerRateCard` can resolve against it, and D01's
-`applies_to()` correctly declines rather than guessing a contracted
-rate. `score_defects` then correctly counts that instance as
-undetected — a genuine, correct abstention, not a false negative to
-chase.
+| # | Spec | What we did | Where |
+|---|---|---|---|
+| 1 | TRD §7.3 `confidence: float` 0..1 | integer basis points `confidence_bps` 0..10000, same as `MatchGroup.confidence_bps`. The no-float lint covers `agent/`. Float appears only at the `resolution.confidence` REAL write (bridge task). | `agent/config.py`, `agent/schema.py` |
+| 2 | LLD §10 `AgentConfig.temperature` | `model.py::TEMPERATURE = 0.0` module constant. Never anything but 0.0 (non-negotiable 8), and a `float` field trips the lint. | `agent/model.py` |
+| 3 | PRD §10.3 `search_intent_ledger(query)` | structured `(order_id, seller_id)` filter, ≥1 required — TRD §7.2 forbids free-form queries. | `agent/tools.py` |
+| 4 | PRD §10.4 "confidence > threshold" | `>=` — LLD §7.3's gate code is authoritative (downgrades when `<`). | `agent/gates.py` |
+| 5 | TRD §7.4 "prompts hashed into the manifest", no field named | `load_prompts().sha256` exposed; bridge task adds `prompt_sha256` to `manifest.json`. | `agent/prompts/__init__.py` |
+| 6 | TRD §7.3 `chosen_hypothesis_index` vs schema `chosen_hypothesis_id` FK | index kept in memory; id mapping is the bridge's job. | `agent/loop.py` |
 
-**Do not build a heuristic to resolve this.** There is no reliable
-signal to disambiguate two sellers sharing a display name after the
-fact; guessing would be exactly the kind of pattern-guessing CLAUDE.md
-rule 4 forbids. If this needs to stop happening, the fix is upstream
-(sellers.csv shouldn't collide, or intent.csv should carry seller_id
-directly) — a generator/fixture decision, not a verify-layer one.
+**`model_claimed_outcome`** is stored as the single `TEXT` column the
+schema already has (no `_json` variant exists). The full pre-downgrade
+`Resolution` lives in memory only. If the panel wants the entire
+claimed object persisted, that is a schema addition — not done.
 
 ---
 
-## 5. `recompute_trace`'s re-evaluation mechanism (P2.11) — test-time only
+## 4. Design decisions that aren't in any spec
 
-LLD §5.4 requires "a trace can never describe arithmetic the code
-didn't actually do," asserted by "re-evaluating simple formulas from
-the inputs dict" — but gives no mechanism. Built: a small, restricted
-AST evaluator (`verify/trace.py::reevaluate_step`/`reevaluate_trace`)
-supporting `+ - * // /`, unary minus, `abs()/min()/max()`, integer
-constants, and name lookups against a step's own `inputs` dict. Not a
-bare `eval()`. Not wired into `TraceBuilder.step()` at runtime — LLD
-says "asserted in tests," and `recompute_step`'s schema has no column
-for a stored verified flag, confirming this is a test-time invariant.
+- **Token attribution.** One `agent_call` per *model turn* carries that
+  turn's full usage (`Toolbox.record_model_turn`); per-tool `agent_call`
+  rows carry 0. Without this, a multi-tool turn double-counts against
+  `llm_tokens_per_1000_records`. `state.tokens_in/out` is the
+  authoritative running total for the budget check.
 
-**The retrofit obligation for any NEW check** (D08 already complies;
-D01–D07 were retrofitted this session): every `.step()` call's
-`formula` must be a literal, executable expression over its own
-`inputs` — no human-only annotations like "(round-half-up)", no rate
-constants baked into an f-string, no list aggregate compressed into a
-bare count (pre-aggregate to a scalar first, or split into more,
-smaller chained steps whose outputs feed the next step's inputs, per
-TRD §6.2's own worked example). A business-rule gate (D02's tolerance
-band, D06's age threshold) is not a step — only money arithmetic is;
-describe the gate's outcome in the conclusion text instead. Wire
-`assert_trace_reevaluates(finding)` (`tests/plumb/verify/_verify_fixtures.py`)
-into every new check's own "fires" test.
+- **`amount_at_risk_paise` is never taken from the model.**
+  `submit_resolution`'s schema doesn't include it; `finalise()` injects
+  it from `exception.amount_at_risk_paise` (PRD §10.5 "no unsourced
+  numbers"). The downgrade gate reads that injected value.
 
----
+- **Budget check is before the call, with the reserve** (LLD §7.2 /
+  §12.4). A single oversized turn can still blow the budget — the
+  guarantee is only that the loop makes *no further* call once
+  `budget_remaining < reserve_tokens`. Test:
+  `test_budget_reserve_stops_before_the_next_call` (57k spend, 60k
+  budget, stops) and `test_a_single_huge_turn_also_stops...`.
 
-## 6. Landmines carried forward from P1 (condensed — see git history for the full reasoning if one of these breaks)
+- **An invalid `submit_resolution` is fed back, not fatal.** The loop
+  appends the `ValidationError` as an `is_error` tool result and lets
+  the model correct it within the 8-iteration cap. Only the cap and the
+  budget force a stop.
 
-- **`ToleranceProfile` lives in `plumb/domain/tolerance.py`, not `match/`** (LLD §1's module map is wrong on this point, deliberately) — D02/D08 and the generator's own D02 injector all read the same instance; never reconstruct a second one.
-- **`match/passes.py`'s three-pool mechanism** (`groups`/`remaining`/`pending`) is authoritative per LLD §4.1 — a still-missing bank leg after P3 is `MISSING_BANK`, a legitimate outcome, not a matching failure.
-- **`bank_credit_id` is derived from CSV row position, not a value in the row.** Any code that reorders `world.bank_credits` must renumber by final list position and remap every `TruthRecord.true_counterparts` reference — `_apply_settlement_messiness`'s tail in `world.py` is the reference implementation.
-- **`plumb_gen/rates.py` duplicates `TDS_BPS`/`TCS_BPS`/`GST_ON_FEES_BPS` from `plumb/rules/ratebook.py` on purpose** — importing the engine's own rate lookup from the generator would make a rate-drift bug in the engine invisible to scoring.
-- **No-float/no-clock discipline is enforced by AST-walking guard tests, not `grep`** — any new "never call X" guard should follow that pattern, not a text search.
-- **T2 auto-match rate is 83.5% mean (79–89% range), honestly under GATE P1's 85% target, deliberately not tuned to pass.** Don't raise `settlement_in_flight_rate_bps` to fix this without the user's explicit sign-off.
+- **`grounding_refs(exc, gathered)`** — an escalation's evidence chain
+  is whatever tools returned, else the finding's own evidence, else the
+  exception's subject record. A FINDING exception with no evidence and
+  nothing gathered raises `AssertionError` (upstream bug — L2 checks
+  always attach evidence).
 
----
-
-## 7. Landmine: no persistence layer yet for verify's own output
-
-`schema/run.sql` has had `settlement_unit`/`finding`/`recompute_step`/
-`finding_evidence` tables since before P2 started, but `store/writer.py`
-still has no `write_settlement_unit`/`write_finding`/`write_recompute_step`/
-`write_finding_evidence` functions. Every check this session (and the
-CLI's L2 line, and the GATE P2 measurement) worked entirely from
-in-memory `SettlementUnit`/`Finding` objects — never a real `run.sqlite`
-round trip. The GATE P2 measurement specifically had to build its own
-adapter directly into `plumb_eval`'s `TruthStore`/`RunData` (both plain
-dataclasses, no SQL connection required) rather than using the
-"official" `plumb_eval.scorer.score_run` path, which requires real
-files. Building the missing writer functions is separate, unscoped
-work — relevant to whoever eventually wires a real CLI run or P4's
-report layer, and possibly to P3 if any tool needs to read real
-persisted findings rather than take them as arguments.
+- **`_contested_key`** (queue.py) — for an `AmbiguousMatch`, the
+  exception's `record_key` is the key the candidate sets *disagree*
+  about (present in some, not all). The common chain members are not
+  the contested record.
 
 ---
 
-## 8. Session ritual
+## 5. Carried forward from earlier handoffs — still live
+
+- **HANDOFF §2 (the P2 handoff): "the recorded data may be wrong" is a
+  first-class hypothesis.** This is now written into
+  `agent/prompts/system.md` as commitment 3, with the reasoning. Three
+  real generator bugs this build surfaced exactly because a
+  disagreement was treated as informative. Keep it in the prompt.
+
+- **Ambiguous-seller-name (old HANDOFF §4)** stays a scored
+  correct-abstention. This session routes only the matcher's own
+  `AmbiguousMatch` subsets (clean `exception.origin='UNMATCHED'` fit).
+  Routing the ambiguous-seller case needs an `exception.origin` value
+  that doesn't exist — a schema decision, still deferred. Do **not**
+  build a heuristic to resolve the seller collision.
+
+- **D08 is narrow by design** (old HANDOFF §3). `BatchCheck` stays
+  retired.
+
+- **`recompute_trace` re-evaluation is test-time only** (old HANDOFF
+  §5). Any new check's `.step()` formula must be a literal executable
+  expression over its own `inputs`.
+
+- **T2 auto-match rate is 83.5% mean, honestly under GATE P1's 85%**,
+  deliberately not tuned. Don't raise `settlement_in_flight_rate_bps`
+  without the user's sign-off.
+
+- **`ToleranceProfile` lives in `plumb/domain/tolerance.py`**, one
+  instance shared. `match/passes.py`'s three-pool mechanism is
+  authoritative.
+
+---
+
+## 6. Determinism note for the next session
+
+L3's `determinism_score` will be **below 1.000** even at temperature 0
+(no API seed). That is a finding to report (non-negotiable 8), and the
+contrast with L1/L2's exact 1.000 is the architecture argument. There
+is **no** 1.000 assertion on L3 anywhere in the tests, deliberately.
+The 5-run L3 determinism harness (hash each record's final resolution,
+per PRD §7.9) is P3.10/P3.11 work — it needs the persistence bridge
+first (the harness reads `determinism_observation` rows).
+
+The user drafts `DEVLOG.md` themselves — flag what broke, don't write
+it for them. Nothing broke this session that isn't captured above.
+
+---
+
+## 7. Session ritual
 
 Push and confirm CI before treating a session's work as done.
-`DEVLOG.md` is the user's own — they draft it outside the repo and
-commit it themselves. Don't flag it as missing.
