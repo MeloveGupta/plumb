@@ -12,6 +12,7 @@ dependencies = [
     "typer",
     "polars",
     "pyyaml",
+    "anthropic>=1.2.0",
 ]
 
 [project.scripts]
