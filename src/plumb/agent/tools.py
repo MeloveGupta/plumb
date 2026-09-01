@@ -187,9 +187,10 @@ class Toolbox:
         """Run one tool call, always returning a (result, AgentCall)
         pair. An unknown tool, a bad argument, or a ToolError all
         degrade to a ToolFailure result -- never an exception out of
-        here. `tokens_in`/`tokens_out` are the requesting model turn's
-        usage, passed by the loop on the first call of a turn and 0 on
-        the rest so a later SUM over agent_call matches true API usage."""
+        here. Tool-call rows carry 0 tokens: the loop attributes a
+        turn's full usage to that turn's `record_model_turn` row instead,
+        so SUM(tokens) over agent_call still equals true API usage
+        without double-counting a multi-tool turn."""
         started = time.monotonic()
         try:
             tool = self.tools.get(name)
@@ -217,6 +218,29 @@ class Toolbox:
             called_at_utc=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
         return result, call
+
+    def record_model_turn(
+        self, *, exception_id: str, iteration: int, label: str, tool_call_count: int,
+        text: str, tokens_in: int, tokens_out: int,
+    ) -> AgentCall:
+        """One AgentCall per model turn, carrying that turn's full token
+        usage. `label` is "model_turn" or "submit_resolution";
+        `result_row_count` is how many tool calls the turn requested;
+        `result_sha256` hashes the turn's prose so an identical turn
+        hashes identically."""
+        return AgentCall(
+            call_id=self._ids.next("call"),
+            exception_id=exception_id,
+            iteration=iteration,
+            tool=label,
+            args={},
+            result_sha256=hashlib.sha256(text.encode()).hexdigest(),
+            result_row_count=tool_call_count,
+            latency_ms=0,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            called_at_utc=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
 
 
 TOOL_SCHEMAS: list[dict] = [
