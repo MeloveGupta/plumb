@@ -59,6 +59,7 @@ class AgentConfig(BaseModel):
     max_iterations: int = 8
     token_budget: int = 60_000
     reserve_tokens: int = 4_000
+    max_output_tokens: int = 4_096
     auto_resolve_threshold_paise: int = 10_000
     confidence_threshold_bps: int = 9_000
     model: str = "claude-sonnet-5"
