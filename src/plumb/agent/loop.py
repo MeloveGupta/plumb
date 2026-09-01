@@ -244,9 +244,14 @@ _RESOLVE_HINT = {
 }
 
 
-def _grounding_refs(exc: Exception_, state: InvestigationState) -> list[EvidenceRef]:
-    if state.evidence:
-        return list(state.evidence)
+def grounding_refs(exc: Exception_, gathered: list[EvidenceRef]) -> list[EvidenceRef]:
+    """A real, non-empty evidence chain for an escalation: whatever the
+    tools actually returned, else the finding's own evidence, else the
+    exception's subject record. A FINDING exception with no evidence and
+    nothing gathered has no real key to cite -- that is an upstream bug,
+    raised loudly rather than fabricated around."""
+    if gathered:
+        return list(gathered)
     if exc.origin == "FINDING" and exc.finding is not None and exc.finding.evidence:
         return [EvidenceRef(record_key=e.record_key, role=e.role) for e in exc.finding.evidence]
     if exc.record_key:
@@ -268,7 +273,7 @@ def forced_escalation(exc: Exception_, state: InvestigationState, reason: StopRe
         hypotheses=state.hypotheses
         or [Hypothesis(rank=1, statement="investigation did not reach a conclusion", supports=[])],
         chosen_hypothesis_index=None,
-        evidence_chain=_grounding_refs(exc, state),
+        evidence_chain=grounding_refs(exc, state.evidence),
         amount_at_risk_paise=exc.amount_at_risk_paise,
         what_was_tried=tried or "the investigation was stopped before any tool call completed",
         what_would_resolve_it=_RESOLVE_HINT[reason],
