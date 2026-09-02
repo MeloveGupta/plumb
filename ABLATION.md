@@ -92,7 +92,8 @@ auto-resolving.
 
 ### `rules_only` — HELD_OUT (`config_b`, seed 42, tier T2, 200 records)
 
-`NOT_MEASURED` — run pending a clean-tree measurement. Command:
+Run `reports/2026-09-02T05:03:55Z-5dacc52/` — clean tree, **not
+provisional**. Reproduce:
 
 ```
 plumb-gen --seed 42 --config configs/config_b.yaml --out data/batch_main_200 --tier T2
@@ -101,9 +102,31 @@ plumb run --data data/batch_main_200 --ablation rules_only --sample-label HELD_O
 plumb-eval --run reports/<run_id> --truth data/batch_main_200/truth
 ```
 
-The committed `reports/<run_id>/{manifest.json,metrics.json,metrics.md,run.sqlite}`
-are the artifact; `data/` is regenerable from the seed and stays
-gitignored.
+`data/` is regenerable from the seed and stays gitignored; the run
+directory is the committed artifact.
+
+| metric | value | note |
+|---|---|---|
+| `over_abstention_rate` | **0.341** | the gate baseline — `hybrid` must come in below this |
+| `correct_abstention_rate` | **1.000** | escalates every unresolvable order (it escalates everything) — `hybrid` must hold this |
+| `residual_resolution_rate` | **0.000** | by construction — L3 disabled |
+| `escalated_unresolved_rate` | 1.000 | all 113 exceptions escalated |
+| `silent_error_rate` | **0.194** | L1's own rate; guardrail for `hybrid` |
+| `false_alarm_inr` | **0** | L2's own; guardrail for `hybrid` |
+| `defect_recall` | 1.000 | 56/56 injected defects caught (L2) |
+| `defect_precision` / `root_cause_accuracy` | 1.000 / 1.000 | |
+| `auto_match_rate` | 0.79 | L1; identical in both arms |
+| `match_precision` / `match_recall` | 0.697 / 0.575 | L1; identical in both arms |
+| `leakage_caught_inr` | 2,437,598 | ₹24,375.98 caught by L2 |
+| `exceptions_total` | 113 | 113 residual + finding exceptions, all escalated |
+| L3 `determinism_score` | `NOT_MEASURED` | n/a — no L3 in this arm |
+
+Full table: `reports/2026-09-02T05:03:55Z-5dacc52/metrics.md`.
+
+Note `correct_abstention_rate = 1.000` is the ceiling — the `hybrid`
+guardrail *"≥ rules_only"* means `hybrid` must also be exactly 1.000,
+i.e. it must not auto-resolve a single one of the ~15 % genuinely
+in-flight settlements. That is a deliberately hard bar.
 
 ### `hybrid` — HELD_OUT
 
