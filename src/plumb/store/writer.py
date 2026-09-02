@@ -1,15 +1,26 @@
-"""BACKEND_SCHEMA.md §3.2 -- provenance chain writers: source_file,
-raw_record, transform_log, quarantine. Persists what ingest/ computed
-(RawRecord, Transform, NormalResult) -- ingest itself stays pure per
-LLD §3.1's own framing ("keeps normalise a pure function"); writing is
-this module's job, not normalise()'s.
+"""BACKEND_SCHEMA.md §3 -- every run.sqlite writer.
 
-Takes plain scalars/tuples rather than importing plumb.ingest.normalise's
-dataclasses: `store <- all layers` means store must sit beneath every
-layer, never depend on one -- importing ingest's types here would be a
-real circular import (ingest imports store to write, store would import
-ingest for types), not just an untidy one. Callers (ingest/pipeline.py)
-unpack RawRecord/Transform into plain arguments at the call site.
+Originally just the §3.2 provenance chain (source_file, raw_record,
+transform_log, quarantine) + §3.4 matching. The L3 persistence bridge
+adds §3.3 record_index, §3.5 verification (settlement_unit, finding,
+recompute_step, finding_evidence), §3.6 exceptions & agent (exception,
+hypothesis, agent_call, resolution, resolution_evidence), §3.7 terminal
+states, and §3.1 provenance (run, config_snapshot).
+
+Every writer here persists what an upstream layer already computed --
+ingest/verify/agent stay pure, writing is this module's job. Takes
+plain scalars/tuples rather than importing those layers' dataclasses:
+`store <- all layers` means store sits beneath every layer, never
+depends on one -- importing ingest's or verify's types here would be a
+real circular import, not just an untidy one. Callers unpack the
+dataclasses into plain arguments at the call site (store/run_writer.py
+is the one orchestrator that does that unpacking for L2/L3).
+
+The one float in this file -- `confidence_bps / 10_000` in
+write_match_group and write_resolution -- is a bare expression right at
+the REAL-column boundary, never a named value the engine could pick up
+(TRD §2.5). match_group.confidence and resolution.confidence are the
+schema's only non-money REAL columns.
 """
 
 import json
@@ -94,4 +105,277 @@ def write_match_member(conn: sqlite3.Connection, match_id: str, record_key: str,
     conn.execute(
         "INSERT INTO match_member (match_id, record_key, side) VALUES (?, ?, ?)",
         (match_id, record_key, side),
+    )
+
+
+# --- §3.3 record_index -- the FK hub -------------------------------------------
+# Every record_key referenced by a domain table, match_member,
+# finding_evidence, exception, resolution_evidence, or
+# record_terminal_state must have a row here first.
+
+
+def write_record_index(
+    conn: sqlite3.Connection, record_key: str, entity_type: str, source_id: str, raw_id: str | None = None
+) -> None:
+    conn.execute(
+        "INSERT INTO record_index (record_key, entity_type, source_id, raw_id) VALUES (?, ?, ?, ?)",
+        (record_key, entity_type, source_id, raw_id),
+    )
+
+
+def write_order_row(
+    conn: sqlite3.Connection,
+    *,
+    record_key: str,
+    seller_id: str,
+    gross_paise: int,
+    category: str,
+    placed_at_utc: str,
+    status: str,
+    is_interstate: bool,
+) -> None:
+    """The only canonical detail table the bridge persists: settlement_unit.order_key
+    FKs "order". The other detail tables (payment/transfer/...) are not FK'd by
+    anything the bridge writes and the scorer never reads them -- deferred to P4's
+    close pack (# PRD-DEVIATION noted in store/run_writer.py)."""
+    conn.execute(
+        'INSERT INTO "order" '
+        "(record_key, seller_id, gross_paise, category, placed_at_utc, status, is_interstate) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (record_key, seller_id, gross_paise, category, placed_at_utc, status, int(is_interstate)),
+    )
+
+
+# --- §3.5 verification --------------------------------------------------------
+
+
+def write_settlement_unit(
+    conn: sqlite3.Connection,
+    ids: IdSequence,
+    *,
+    order_key: str,
+    match_id: str | None,
+    seller_id: str,
+    period: str,
+) -> str:
+    unit_id = ids.next("unit")
+    conn.execute(
+        "INSERT INTO settlement_unit (unit_id, order_key, match_id, seller_id, period) VALUES (?, ?, ?, ?, ?)",
+        (unit_id, order_key, match_id, seller_id, period),
+    )
+    return unit_id
+
+
+def write_finding(
+    conn: sqlite3.Connection,
+    ids: IdSequence,
+    *,
+    unit_id: str,
+    defect_id: str,
+    severity: str,
+    amount_at_risk_paise: int,
+    on_matched_record: bool,
+    conclusion: str,
+) -> str:
+    """severity arrives as the plain string (Severity.value). finding is
+    append-only (no_update_finding / no_delete_finding) -- write it in final form."""
+    finding_id = ids.next("fnd")
+    conn.execute(
+        "INSERT INTO finding "
+        "(finding_id, unit_id, defect_id, severity, amount_at_risk_paise, on_matched_record, conclusion) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (finding_id, unit_id, defect_id, severity, amount_at_risk_paise, int(on_matched_record), conclusion),
+    )
+    return finding_id
+
+
+def write_recompute_step(
+    conn: sqlite3.Connection,
+    finding_id: str,
+    *,
+    step_no: int,
+    label: str,
+    formula: str,
+    inputs: dict,
+    output_paise: int,
+) -> None:
+    conn.execute(
+        "INSERT INTO recompute_step (finding_id, step_no, label, formula, inputs_json, output_paise) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (finding_id, step_no, label, formula, json.dumps(inputs, sort_keys=True), output_paise),
+    )
+
+
+def write_finding_evidence(conn: sqlite3.Connection, finding_id: str, record_key: str, role: str) -> None:
+    conn.execute(
+        "INSERT INTO finding_evidence (finding_id, record_key, role) VALUES (?, ?, ?)",
+        (finding_id, record_key, role),
+    )
+
+
+# --- §3.6 exceptions & agent -------------------------------------------------
+
+
+def write_exception(
+    conn: sqlite3.Connection,
+    *,
+    exception_id: str,
+    origin: str,
+    record_key: str | None,
+    finding_id: str | None,
+    amount_at_risk_paise: int,
+    queue_rank: int,
+) -> None:
+    """The paired CHECKs (BACKEND_SCHEMA §3.6) bind record_key to
+    origin='UNMATCHED' and finding_id to origin='FINDING' -- the caller
+    passes exactly one non-null and the constraint enforces it."""
+    conn.execute(
+        "INSERT INTO exception "
+        "(exception_id, origin, record_key, finding_id, amount_at_risk_paise, queue_rank) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (exception_id, origin, record_key, finding_id, amount_at_risk_paise, queue_rank),
+    )
+
+
+def write_hypothesis(
+    conn: sqlite3.Connection,
+    ids: IdSequence,
+    *,
+    exception_id: str,
+    rank: int,
+    statement: str,
+    supports: list[str],
+) -> str:
+    hypothesis_id = ids.next("hyp")
+    conn.execute(
+        "INSERT INTO hypothesis (hypothesis_id, exception_id, rank, statement, supports_json) VALUES (?, ?, ?, ?, ?)",
+        (hypothesis_id, exception_id, rank, statement, json.dumps(supports)),
+    )
+    return hypothesis_id
+
+
+def write_agent_call(
+    conn: sqlite3.Connection,
+    *,
+    call_id: str,
+    exception_id: str,
+    iteration: int,
+    tool: str,
+    args: dict,
+    result_sha256: str,
+    result_row_count: int,
+    latency_ms: int,
+    tokens_in: int,
+    tokens_out: int,
+    called_at_utc: str,
+) -> None:
+    """agent_call.iteration has CHECK(iteration BETWEEN 1 AND 8) -- the loop's
+    own 8-iteration cap (loop.py) keeps every row inside that. append-only."""
+    conn.execute(
+        "INSERT INTO agent_call "
+        "(call_id, exception_id, iteration, tool, args_json, result_sha256, result_row_count, "
+        " latency_ms, tokens_in, tokens_out, called_at_utc) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            call_id, exception_id, iteration, tool, json.dumps(args), result_sha256,
+            result_row_count, latency_ms, tokens_in, tokens_out, called_at_utc,
+        ),
+    )
+
+
+def write_resolution(
+    conn: sqlite3.Connection,
+    *,
+    exception_id: str,
+    outcome: str,
+    model_claimed_outcome: str,
+    was_downgraded: bool,
+    downgrade_reason: str | None,
+    confidence_bps: int,
+    chosen_hypothesis_id: str | None,
+    iterations_used: int,
+    stop_reason: str,
+    what_was_tried: str,
+    what_would_resolve_it: str | None,
+) -> None:
+    """confidence_bps (int, 0..10000) -> resolution.confidence REAL (0..1)
+    at this boundary, same as write_match_group. The final CHECK
+    (outcome != 'ESCALATED_UNRESOLVED' OR what_would_resolve_it IS NOT NULL)
+    turns a malformed escalation into an insert failure. append-only."""
+    conn.execute(
+        "INSERT INTO resolution "
+        "(exception_id, outcome, model_claimed_outcome, was_downgraded, downgrade_reason, confidence, "
+        " chosen_hypothesis_id, iterations_used, stop_reason, what_was_tried, what_would_resolve_it) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            exception_id, outcome, model_claimed_outcome, int(was_downgraded), downgrade_reason,
+            confidence_bps / 10_000, chosen_hypothesis_id, iterations_used, stop_reason,
+            what_was_tried, what_would_resolve_it,
+        ),
+    )
+
+
+def write_resolution_evidence(conn: sqlite3.Connection, exception_id: str, record_key: str, role: str) -> None:
+    conn.execute(
+        "INSERT INTO resolution_evidence (exception_id, record_key, role) VALUES (?, ?, ?)",
+        (exception_id, record_key, role),
+    )
+
+
+# --- §3.7 terminal states & §3.1 provenance ---------------------------------
+
+
+def write_record_terminal_state(conn: sqlite3.Connection, record_key: str, terminal_state: str) -> None:
+    """One row per record_index key -- v_conservation asserts the counts
+    match. append-only."""
+    conn.execute(
+        "INSERT INTO record_terminal_state (record_key, terminal_state) VALUES (?, ?)",
+        (record_key, terminal_state),
+    )
+
+
+def write_run_row(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    plumb_version: str,
+    git_sha: str,
+    git_dirty: bool,
+    batch_id: str,
+    generator_seed: int,
+    generator_config_sha256: str,
+    engine_config_sha256: str,
+    schema_sha256: str,
+    tolerance_profile: str,
+    rules_module_version: str,
+    ablation_config: str,
+    sample_label: str,
+    llm_model: str | None,
+    started_at_utc: str,
+    finished_at_utc: str | None,
+    llm_temperature=None,  # unannotated on purpose: the no-float lint (TRD §2.5) covers store/,
+    #                        and this is model.TEMPERATURE (0.0) for hybrid or None for rules_only --
+    #                        run.llm_temperature is REAL, one of the schema's 3 non-money REAL columns.
+) -> None:
+    conn.execute(
+        "INSERT INTO run "
+        "(run_id, plumb_version, git_sha, git_dirty, batch_id, generator_seed, generator_config_sha256, "
+        " engine_config_sha256, schema_sha256, tolerance_profile, rules_module_version, ablation_config, "
+        " sample_label, llm_model, llm_temperature, started_at_utc, finished_at_utc) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id, plumb_version, git_sha, int(git_dirty), batch_id, generator_seed,
+            generator_config_sha256, engine_config_sha256, schema_sha256, tolerance_profile,
+            rules_module_version, ablation_config, sample_label, llm_model, llm_temperature,
+            started_at_utc, finished_at_utc,
+        ),
+    )
+
+
+def write_config_snapshot(conn: sqlite3.Connection, key: str, value: object) -> None:
+    """value is JSON-serialised here; config_snapshot.value_json has
+    CHECK(json_valid(value_json))."""
+    conn.execute(
+        "INSERT INTO config_snapshot (key, value_json) VALUES (?, ?)",
+        (key, json.dumps(value, sort_keys=True)),
     )
