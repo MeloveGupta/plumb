@@ -6,16 +6,6 @@ fields.
 
 config_a here -- this is wiring verification, not a headline number.
 The held-out rules_only baseline is committed separately (ABLATION.md).
-
-KNOWN GAP (see DEVLOG / flagged to the user): plumb_eval.scorer.score_run
-cannot yet score a real run -- match/engine.py emits the order and
-intent keys as match_member rows (side='intent'), but
-plumb_eval/truth_store.py's closures are leg-only by explicit design
-("a real match_group's members can only ever be leg keys ... never the
-order's own key"). So validate_no_fabrication and score_match both fail
-on real matcher output. That is an L1<->scorer contract dispute, not a
-bridge defect -- the end-to-end score_run assertion is xfail'd until
-it's resolved.
 """
 
 from datetime import date
@@ -79,17 +69,13 @@ def test_rules_only_run_is_scorable_and_conserves(batch, tmp_path):
     ).fetchone()[0] == 0
     conn.close()
 
-
-@pytest.mark.xfail(reason="L1<->scorer contract: matcher emits order/intent keys as match_members, "
-                          "truth_store closures are leg-only -- see module docstring", strict=True)
-def test_rules_only_run_scores_end_to_end(batch, tmp_path):
-    outcome = execute_run(
-        data_dir=batch, out_dir=tmp_path / "reports", ablation="rules_only", sample_label="IN_SAMPLE",
-        generator_seed=42, generator_config=Path("configs/config_a.yaml"), as_of=date(2026, 8, 26),
-    )
+    # plumb_eval scores it end to end (git tree is dirty mid-session -> allow_provisional)
     payload = score_run(outcome.run_dir, batch / "truth", allow_provisional=True)
     assert payload["sample_label"] == "IN_SAMPLE"
     assert "defect_recall" in payload["metrics"]
+    assert "over_abstention_rate" in payload["metrics"]
+    assert (outcome.run_dir / "metrics.json").exists()
+    assert (outcome.run_dir / "eval.sqlite").exists()
 
 
 def test_manifest_has_the_reproducibility_fields(batch, tmp_path):

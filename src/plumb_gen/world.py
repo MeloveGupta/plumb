@@ -481,7 +481,13 @@ def _build_order(
         d02_shortfall = 0
 
     # --- truth ---
-    true_counterparts = [payment_id, transfer_id]
+    # true_counterparts is every non-order record the matcher legitimately
+    # groups with this order: the intent leg (same intent.csv row as the
+    # order, tagged side="intent" by the matcher) plus payment / transfer
+    # / settlement_recon / bank_credit. The order's own key is not listed
+    # here -- plumb_eval/truth_store.py adds it back, since the matcher
+    # emits it as a member too.
+    true_counterparts = [intent_id, payment_id, transfer_id]
     if settled_at is not None:
         true_counterparts.append(world.settlement_recons[-1].settlement_recon_id)
         true_counterparts.append(world.bank_credits[-1].bank_credit_id)

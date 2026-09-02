@@ -37,6 +37,19 @@ from plumb_eval.errors import TruthJoinError
 from plumb_eval.run_reader import Finding, MatchGroup, RunData
 from plumb_eval.truth_store import TruthStore
 
+# match/engine.py's P0 ID_CHAIN groups the whole payment_id chain: the
+# settlement identity legs (intent/payment/transfer/settlement_recon/
+# bank_credit -- what a truth closure holds), plus the order key, plus
+# any refund / dispute / reversal that shares the payment_id. Those last
+# are events against the payment, not part of the settlement's identity;
+# truth doesn't list them and score_match ignores them.
+_SATELLITE_PREFIXES = ("rfnd_", "disp_", "rvsl_", "oln_")
+
+
+def _is_settlement_identity(key: str, order_keys: set[str]) -> bool:
+    return key not in order_keys and not key.startswith(_SATELLITE_PREFIXES)
+
+
 TRUE_POSITIVE = "TRUE_POSITIVE"
 FALSE_POSITIVE = "FALSE_POSITIVE"
 
@@ -63,17 +76,47 @@ class ScoredAbstention:
 
 
 def validate_no_fabrication(run: RunData, truth: TruthStore) -> None:
-    referenced_keys: set[str] = set()
-    for group in run.match_groups:
-        referenced_keys.update(group.members)
-    for finding in run.findings:
-        referenced_keys.update(finding.evidence_keys)
-    for exc in run.exceptions:
-        if exc.record_key is not None:
-            referenced_keys.add(exc.record_key)
+    """TRD §8.3 -- a key in engine output that isn't a real record fails
+    the run. Two oracles, because the keys mean different things:
 
-    for key in sorted(referenced_keys):
+    - match_member keys and UNMATCHED-exception record_keys are claims
+      about *settlement identity* -- they must trace to a truth closure.
+      A matcher that grouped a key ground truth never heard of is
+      fabricating a settlement.
+    - finding / resolution evidence keys are pointers into the ingested
+      data. L2 is a pure function over that data and cannot invent a
+      key; L3's fabrication gate already checked its evidence in
+      process. Here they are validated against record_index -- the
+      engine's own record of what it ingested -- which still catches a
+      hallucinated key (it was never ingested, so it isn't there).
+      Checking these against truth's closures instead would wrongly
+      reject legitimate dispute / refund / reversal evidence, none of
+      which is a settlement leg.
+    """
+    order_keys = set(truth.order_keys())
+
+    identity_keys: set[str] = set()
+    other_keys: set[str] = set()
+    for group in run.match_groups:
+        for member in group.members:
+            (identity_keys if _is_settlement_identity(member, order_keys) else other_keys).add(member)
+    for exc in run.exceptions:
+        if exc.record_key is None:
+            continue
+        (identity_keys if _is_settlement_identity(exc.record_key, order_keys) else other_keys).add(exc.record_key)
+    for finding in run.findings:
+        other_keys.update(finding.evidence_keys)
+
+    for key in sorted(identity_keys):
         truth.counterpart_closure(key)  # raises TruthJoinError on the first offender
+
+    if run.record_index_keys:  # empty only for hand-built RunData that predates the column
+        missing = sorted(k for k in other_keys if k not in run.record_index_keys)
+        if missing:
+            raise TruthJoinError(
+                f"engine output references {missing[0]!r}, which is not in the run's record_index "
+                f"-- fabricated reference"
+            )
 
 
 def score_match(
@@ -83,9 +126,20 @@ def score_match(
     findings_by_unit: dict[str, list[Finding]],
     exceptions_by_record: dict[str, str],
 ) -> ScoredMatch:
-    members = set(group.members)
-    if not members:
+    raw_members = set(group.members)
+    if not raw_members:
         raise ValueError(f"match_group {group.match_id!r} has no members")
+
+    # Compare only the settlement-identity legs: the matcher also groups
+    # the order key and any refund/dispute/reversal on the payment, none
+    # of which is part of the closure (see _SATELLITE_PREFIXES).
+    order_keys = set(truth.order_keys())
+    members = {m for m in raw_members if _is_settlement_identity(m, order_keys)}
+    if not members:
+        # a group with no identity leg at all (e.g. an orphan satellite) --
+        # nothing to score against a closure; treat as a false positive.
+        flagged = any(findings_by_unit.get(uid) for uid in unit_ids_for_match)
+        return ScoredMatch(group.match_id, FALSE_POSITIVE, silent=not flagged)
 
     anchor_key = sorted(members)[0]
     expected = truth.counterpart_closure(anchor_key)
@@ -177,7 +231,13 @@ def score_abstentions(run: RunData, truth: TruthStore) -> list[ScoredAbstention]
     unit_by_finding = {f.finding_id: f.unit_id for f in run.findings}
     exception_by_id = {e.exception_id: e for e in run.exceptions}
 
+    # is_resolvable is a per-ORDER truth signal (PRD §7.7), so the
+    # verdict is per order, not per exception -- an order with two
+    # escalated exceptions (an unmatched leg AND a finding) is one
+    # abstention decision, scored once. Without this dedup a rate can
+    # exceed 1.0.
     scored: list[ScoredAbstention] = []
+    seen_orders: set[str] = set()
     for resolution in run.resolutions:  # already ORDER BY exception_id
         if resolution.outcome != "ESCALATED_UNRESOLVED":
             continue
@@ -189,10 +249,14 @@ def score_abstentions(run: RunData, truth: TruthStore) -> list[ScoredAbstention]
             unit_id = unit_by_finding.get(exc.finding_id)
             order_key = order_key_by_unit.get(unit_id) if unit_id else None
         else:
-            order_key = truth.order_key_for(exc.record_key)
+            try:
+                order_key = truth.order_key_for(exc.record_key)
+            except TruthJoinError:
+                order_key = None
 
-        if order_key is None:
+        if order_key is None or order_key in seen_orders:
             continue
+        seen_orders.add(order_key)
 
         resolvable = truth.is_resolvable(order_key)
         verdict = "OVER_ABSTENTION" if resolvable else "CORRECT_ABSTENTION"

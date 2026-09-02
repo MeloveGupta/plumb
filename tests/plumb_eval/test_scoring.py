@@ -42,14 +42,18 @@ def scenario(tmp_path):
     insert_run_row(run_conn)
 
     # --- Order 1: correctly and completely matched -> TRUE_POSITIVE ---
+    # The matcher groups the order key and the intent leg alongside the
+    # razorpay/bank legs (match/engine.py P0 ID_CHAIN), so a complete
+    # match_group carries all six; truth's closure = intent leg +
+    # true_counterparts + the order's own key (truth_store.py).
     insert_order(run_conn, "ord_00001")
-    for key in ("pay_00001", "txfr_00001", "setl_00001", "bank_00001"):
+    for key in ("int_00001", "pay_00001", "txfr_00001", "setl_00001", "bank_00001"):
         insert_leg(run_conn, key)
-    insert_match(run_conn, "mtch_00001", ["pay_00001", "txfr_00001", "setl_00001", "bank_00001"])
+    insert_match(run_conn, "mtch_00001", ["ord_00001", "int_00001", "pay_00001", "txfr_00001", "setl_00001", "bank_00001"])
     insert_settlement_unit(run_conn, "unit_00001", "ord_00001", match_id="mtch_00001")
     insert_truth_record(
         truth_conn, "ord_00001",
-        ["pay_00001", "txfr_00001", "setl_00001", "bank_00001"],
+        ["int_00001", "pay_00001", "txfr_00001", "setl_00001", "bank_00001"],
         {"commission_paise": 100, "tcs_paise": 10, "tds_paise": 5},
     )
 

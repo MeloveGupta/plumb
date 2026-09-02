@@ -77,6 +77,7 @@ class RunData:
     resolutions: list[ResolutionRow]
     agent_call_tokens_total: int
     agent_call_count: int
+    record_index_keys: frozenset[str] = frozenset()
 
     @classmethod
     def from_db(cls, conn: sqlite3.Connection) -> "RunData":
@@ -145,6 +146,10 @@ class RunData:
         ).fetchone()
         agent_call_tokens_total, agent_call_count = agent_call_row
 
+        record_index_keys = frozenset(
+            row[0] for row in conn.execute("SELECT record_key FROM record_index")
+        )
+
         return cls(
             run_id=run_id,
             started_at_utc=started_at_utc,
@@ -156,4 +161,5 @@ class RunData:
             resolutions=resolutions,
             agent_call_tokens_total=agent_call_tokens_total,
             agent_call_count=agent_call_count,
+            record_index_keys=record_index_keys,
         )

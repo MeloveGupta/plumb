@@ -8,17 +8,18 @@ truth closure -- the order itself and every one of its true
 counterparts -- maps to the SAME closure set, so counterpart_closure
 works no matter which member the future matcher picks as its anchor.
 
-The closure itself is leg-only (true_counterparts, never including the
-order's own record_key). match_member.side is constrained to
-('intent','razorpay','bank') -- the three raw source files -- and an
-order is never independently ingested as its own raw record with a
-"side"; it's the grouping key, synthesized during ingest from its
-legs, not one of them. So a real match_group's members can only ever
-be leg keys (payment/transfer/settlement_recon/bank_credit), never the
-order's own key -- counterpart_closure has to return the leg-only set
-regardless of which key (order or leg) was used to look it up, or a
-correct match_group's members could never equal it. Caught by hand-
-computing the first fixture, not by inspection.
+The closure is a settlement's non-order legs: intent, payment,
+transfer, settlement_recon, bank_credit (true_counterparts, world.py).
+
+    P3 REVISION: an earlier version left the intent leg out, on the
+    assumption that "a real match_group's members can only ever be leg
+    keys, never the order's own key". The matcher P1 actually shipped
+    (match/engine.py) groups the order key AND the intent key too, both
+    tagged side="intent". Fix landed in two places: the generator now
+    lists intent_id in true_counterparts, and score_match strips order
+    keys from the match members before comparing (the order key is the
+    grouping identity, not a leg). counterpart_closure(order_key) still
+    resolves -- it returns the leg set.
 
 A key found in neither position is fabrication (TRD §8.3): the engine
 claimed a record_key that ground truth never heard of.
@@ -52,7 +53,13 @@ class TruthStore:
         ).fetchall()
         for record_key, counterparts_json, obligation_json, resolvable in rows:
             counterparts = json.loads(counterparts_json)
-            closure = frozenset(counterparts)  # leg-only -- never includes record_key itself
+            # counterparts is intent + payment + transfer + settlement_recon
+            # + bank_credit (world.py). The order's own key is NOT in the
+            # closure -- score_match strips it from the match members
+            # instead, since it is the grouping identity, not a matched
+            # leg. counterpart_closure(order_key) still resolves (keyed
+            # below), it just returns the leg set.
+            closure = frozenset(counterparts)
 
             closure_by_key[record_key] = closure
             order_key_by_member[record_key] = record_key
