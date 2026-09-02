@@ -81,18 +81,29 @@ def write_quarantine(conn: sqlite3.Connection, raw_id: str, reason_code: str, de
     )
 
 
-def write_match_group(conn: sqlite3.Connection, ids: IdSequence, *, rule_id: str, pass_: str, confidence_bps: int) -> str:
+def write_match_group_row(
+    conn: sqlite3.Connection, *, match_id: str, rule_id: str, pass_: str, confidence_bps: int
+) -> None:
     """confidence_bps arrives as an int (TRD §2.5 -- no float anywhere in
     the engine's own path); match_group.confidence is REAL in the schema
     and CHECK(confidence > 0 AND confidence <= 1), so the /10000 division
     happens here, right at the DB boundary, as a bare expression rather
     than a named float value the rest of the engine could pick up.
+
+    Takes a pre-assigned match_id -- store/run_writer.py synthesises the
+    {group index: match_id} dict before build_units consumes it, then
+    writes the rows with those same ids.
     """
-    match_id = ids.next("mtch")
     conn.execute(
         "INSERT INTO match_group (match_id, rule_id, pass, confidence) VALUES (?, ?, ?, ?)",
         (match_id, rule_id, pass_, confidence_bps / 10_000),
     )
+
+
+def write_match_group(conn: sqlite3.Connection, ids: IdSequence, *, rule_id: str, pass_: str, confidence_bps: int) -> str:
+    """Generates the match_id and writes the row -- match.engine.persist()'s path."""
+    match_id = ids.next("mtch")
+    write_match_group_row(conn, match_id=match_id, rule_id=rule_id, pass_=pass_, confidence_bps=confidence_bps)
     return match_id
 
 
@@ -151,42 +162,44 @@ def write_order_row(
 
 def write_settlement_unit(
     conn: sqlite3.Connection,
-    ids: IdSequence,
     *,
+    unit_id: str,
     order_key: str,
     match_id: str | None,
     seller_id: str,
     period: str,
-) -> str:
-    unit_id = ids.next("unit")
+) -> None:
+    """unit_id is pre-assigned by verify.unit.build_units (it already
+    calls ids.next("unit")) -- the bridge writes it as given, it does not
+    re-generate."""
     conn.execute(
         "INSERT INTO settlement_unit (unit_id, order_key, match_id, seller_id, period) VALUES (?, ?, ?, ?, ?)",
         (unit_id, order_key, match_id, seller_id, period),
     )
-    return unit_id
 
 
 def write_finding(
     conn: sqlite3.Connection,
-    ids: IdSequence,
     *,
+    finding_id: str,
     unit_id: str,
     defect_id: str,
     severity: str,
     amount_at_risk_paise: int,
     on_matched_record: bool,
     conclusion: str,
-) -> str:
-    """severity arrives as the plain string (Severity.value). finding is
-    append-only (no_update_finding / no_delete_finding) -- write it in final form."""
-    finding_id = ids.next("fnd")
+) -> None:
+    """finding_id is pre-assigned by the orchestrator, because
+    agent.queue.build_exception_queue needs (finding_id, Finding) pairs
+    before L3 runs -- the same id must reach the row here. severity
+    arrives as the plain string (Severity.value). finding is append-only
+    -- write it in final form."""
     conn.execute(
         "INSERT INTO finding "
         "(finding_id, unit_id, defect_id, severity, amount_at_risk_paise, on_matched_record, conclusion) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (finding_id, unit_id, defect_id, severity, amount_at_risk_paise, int(on_matched_record), conclusion),
     )
-    return finding_id
 
 
 def write_recompute_step(

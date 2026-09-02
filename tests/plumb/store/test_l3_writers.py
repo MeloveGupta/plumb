@@ -44,8 +44,9 @@ def _order(conn, key="ord_00001"):
     return key
 
 
-def _unit(conn, ids, order_key="ord_00001"):
-    return write_settlement_unit(conn, ids, order_key=order_key, match_id=None, seller_id="sel_00001", period="2026-07")
+def _unit(conn, order_key="ord_00001", unit_id="unit_00001"):
+    write_settlement_unit(conn, unit_id=unit_id, order_key=order_key, match_id=None, seller_id="sel_00001", period="2026-07")
+    return unit_id
 
 
 def test_record_index_and_order_round_trip(conn):
@@ -58,14 +59,14 @@ def test_record_index_and_order_round_trip(conn):
 def test_settlement_unit_and_finding(conn):
     ids = IdSequence()
     _order(conn)
-    unit_id = _unit(conn, ids)
+    unit_id = _unit(conn)
     assert unit_id == "unit_00001"
 
-    finding_id = write_finding(
-        conn, ids, unit_id=unit_id, defect_id="D01", severity="high",
+    finding_id = "fnd_00001"
+    write_finding(
+        conn, finding_id=finding_id, unit_id=unit_id, defect_id="D01", severity="high",
         amount_at_risk_paise=2_000, on_matched_record=True, conclusion="rate drift",
     )
-    assert finding_id == "fnd_00001"
     row = conn.execute(
         "SELECT defect_id, severity, amount_at_risk_paise, on_matched_record FROM finding WHERE finding_id = ?",
         (finding_id,),
@@ -85,9 +86,10 @@ def test_settlement_unit_and_finding(conn):
 def test_finding_evidence_fk_rejects_an_unknown_record_key(conn):
     ids = IdSequence()
     _order(conn)
-    unit_id = _unit(conn, ids)
-    finding_id = write_finding(
-        conn, ids, unit_id=unit_id, defect_id="D02", severity="low",
+    unit_id = _unit(conn)
+    finding_id = "fnd_00001"
+    write_finding(
+        conn, finding_id=finding_id, unit_id=unit_id, defect_id="D02", severity="low",
         amount_at_risk_paise=1, on_matched_record=False, conclusion="x",
     )
     with pytest.raises(sqlite3.IntegrityError):
@@ -184,9 +186,10 @@ def test_agent_call_round_trips_and_rejects_iteration_out_of_range(conn):
 def test_append_only_triggers_block_update(conn):
     ids = IdSequence()
     _order(conn)
-    unit_id = _unit(conn, ids)
-    finding_id = write_finding(
-        conn, ids, unit_id=unit_id, defect_id="D03", severity="low",
+    unit_id = _unit(conn)
+    finding_id = "fnd_00001"
+    write_finding(
+        conn, finding_id=finding_id, unit_id=unit_id, defect_id="D03", severity="low",
         amount_at_risk_paise=1, on_matched_record=False, conclusion="x",
     )
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):

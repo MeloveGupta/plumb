@@ -50,6 +50,8 @@ Starting values, and the reasoning for each:
 # 0.0, read from that constant by the bridge task.
 """
 
+import hashlib
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -63,3 +65,9 @@ class AgentConfig(BaseModel):
     auto_resolve_threshold_paise: int = 10_000
     confidence_threshold_bps: int = 9_000
     model: str = "claude-sonnet-5"
+
+    def sha256(self) -> str:
+        """LLD §10's `PlumbConfig.sha256()` shape -- the manifest's
+        `engine_config_sha256`. Field order is fixed by the model
+        definition, so the digest is stable across runs."""
+        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()

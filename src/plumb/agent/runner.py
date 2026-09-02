@@ -22,7 +22,7 @@ not yet a config field; it is passed here by the orchestration caller.
 from plumb.agent.config import AgentConfig
 from plumb.agent.evidence import RecordIndex
 from plumb.agent.gates import apply_downgrade_gate, assert_evidence_resolves
-from plumb.agent.loop import grounding_refs, investigate
+from plumb.agent.loop import InvestigationState, grounding_refs, investigate
 from plumb.agent.model import ModelClient
 from plumb.agent.prompts import Prompts
 from plumb.agent.queue import Exception_
@@ -64,6 +64,39 @@ def _batch_budget_escalation(exc: Exception_) -> Resolution:
     )
 
 
+def run_investigation_traced(
+    queue: list[Exception_],
+    toolbox: Toolbox,
+    index: RecordIndex,
+    client: ModelClient,
+    cfg: AgentConfig,
+    prompts: Prompts,
+    *,
+    ablation: str = "hybrid",
+    batch_token_budget: int | None = None,
+) -> list[tuple[Resolution, InvestigationState | None]]:
+    """Same fixed pipeline as run_investigation, but keeps each
+    exception's InvestigationState (its agent_calls, its token totals)
+    instead of discarding it -- the persistence bridge needs those rows.
+    A rules_only or batch-budget escalation makes no model call, so its
+    state is None."""
+    if ablation == "rules_only":
+        return [(_rules_only_escalation(exc), None) for exc in queue]
+
+    out: list[tuple[Resolution, InvestigationState | None]] = []
+    spent = 0
+    for exc in queue:  # already in queue_rank order
+        if batch_token_budget is not None and spent >= batch_token_budget:
+            out.append((_batch_budget_escalation(exc), None))
+            continue
+        resolution, state = investigate(exc, toolbox, client, cfg, prompts)
+        spent += state.tokens_in + state.tokens_out
+        resolution = apply_downgrade_gate(resolution, cfg)
+        assert_evidence_resolves(resolution, index)  # fatal -- fabrication aborts the run
+        out.append((resolution, state))
+    return out
+
+
 def run_investigation(
     queue: list[Exception_],
     toolbox: Toolbox,
@@ -75,18 +108,10 @@ def run_investigation(
     ablation: str = "hybrid",
     batch_token_budget: int | None = None,
 ) -> list[Resolution]:
-    if ablation == "rules_only":
-        return [_rules_only_escalation(exc) for exc in queue]
-
-    resolutions: list[Resolution] = []
-    spent = 0
-    for exc in queue:  # already in queue_rank order
-        if batch_token_budget is not None and spent >= batch_token_budget:
-            resolutions.append(_batch_budget_escalation(exc))
-            continue
-        resolution, state = investigate(exc, toolbox, client, cfg, prompts)
-        spent += state.tokens_in + state.tokens_out
-        resolution = apply_downgrade_gate(resolution, cfg)
-        assert_evidence_resolves(resolution, index)  # fatal -- fabrication aborts the run
-        resolutions.append(resolution)
-    return resolutions
+    return [
+        resolution
+        for resolution, _state in run_investigation_traced(
+            queue, toolbox, index, client, cfg, prompts,
+            ablation=ablation, batch_token_budget=batch_token_budget,
+        )
+    ]

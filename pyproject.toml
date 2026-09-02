@@ -16,6 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
+plumb = "plumb.cli:app"
 plumb-gen = "plumb_gen.cli:app"
 plumb-eval = "plumb_eval.cli:app"
 
