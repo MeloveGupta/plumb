@@ -169,6 +169,20 @@ def compute_metrics(
     # 7.9 determinism
     determinism_score = compute_determinism_score(determinism_observations or [], total_records)
 
+    # L3 outcome mix (PRD §9 -- the ablation's residual-resolution comparison).
+    # residual_resolution_rate is the GATE P3 supporting number: the share of
+    # exceptions L3 moved off ESCALATED_UNRESOLVED. It is 0 for rules_only by
+    # construction. It does NOT gate -- a PROPOSED resolution's correctness is
+    # not scored (no proposed-correction amount in the schema) -- over_abstention_rate
+    # is the gating metric.
+    outcomes = [r.outcome for r in run.resolutions]
+    exceptions_total = len(run.exceptions)
+    n_auto = outcomes.count("AUTO_RESOLVED")
+    n_proposed = outcomes.count("PROPOSED")
+    n_escalated = outcomes.count("ESCALATED_UNRESOLVED")
+    residual_resolution_rate = _ratio(n_auto + n_proposed, len(outcomes))
+    escalated_unresolved_rate = _ratio(n_escalated, len(outcomes))
+
     return [
         Metric("auto_match_rate", "ratio", auto_match_rate),
         Metric("match_precision", "ratio", match_precision),
@@ -187,4 +201,10 @@ def compute_metrics(
         Metric("llm_tokens_per_1000_records", "tokens", llm_tokens_per_1000_records),
         Metric("inr_cost_per_1000_records", "paise", inr_cost_per_1000_records),
         Metric("determinism_score", "ratio", determinism_score),
+        Metric("residual_resolution_rate", "ratio", residual_resolution_rate),
+        Metric("escalated_unresolved_rate", "ratio", escalated_unresolved_rate),
+        Metric("exceptions_total", "count", exceptions_total),
+        Metric("auto_resolved_count", "count", n_auto),
+        Metric("proposed_count", "count", n_proposed),
+        Metric("escalated_unresolved_count", "count", n_escalated),
     ]

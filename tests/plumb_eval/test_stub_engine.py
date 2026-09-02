@@ -22,6 +22,8 @@ EXPECTED_METRIC_NAMES = {
     "records_per_second", "wall_clock_seconds_total",
     "llm_tokens_per_1000_records", "inr_cost_per_1000_records",
     "determinism_score",
+    "residual_resolution_rate", "escalated_unresolved_rate", "exceptions_total",
+    "auto_resolved_count", "proposed_count", "escalated_unresolved_count",
 }
 
 

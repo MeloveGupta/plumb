@@ -166,6 +166,14 @@ def test_hand_computed_metrics(rich_scenario):
     assert metrics["inr_cost_per_1000_records"] == (None, "paise")  # no sourced rate -- always NOT_MEASURED
     assert metrics["determinism_score"] == (None, "ratio")  # single run, no observations
 
+    # L3 outcome mix: 2 exceptions, both resolutions ESCALATED_UNRESOLVED.
+    assert metrics["exceptions_total"] == (2, "count")
+    assert metrics["auto_resolved_count"] == (0, "count")
+    assert metrics["proposed_count"] == (0, "count")
+    assert metrics["escalated_unresolved_count"] == (2, "count")
+    assert metrics["residual_resolution_rate"] == (0 / 2, "ratio")
+    assert metrics["escalated_unresolved_rate"] == (2 / 2, "ratio")
+
 
 @pytest.fixture
 def zero_denominator_scenario(tmp_path):
@@ -260,4 +268,7 @@ def test_every_prd_7_metric_has_a_row(rich_scenario):
         "records_per_second", "wall_clock_seconds_total",
         "llm_tokens_per_1000_records", "inr_cost_per_1000_records",
         "determinism_score",
+        # L3 outcome mix -- the ablation's residual-resolution comparison (PRD §9)
+        "residual_resolution_rate", "escalated_unresolved_rate", "exceptions_total",
+        "auto_resolved_count", "proposed_count", "escalated_unresolved_count",
     }
