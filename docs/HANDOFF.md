@@ -1,187 +1,146 @@
-# Handoff — end of the P3.1–P3.7 session (L3 agent machinery complete)
+# Handoff — persistence bridge done, rules_only baseline committed, hybrid arm next
 
 Written for a fresh session that has the seven specs and the committed
-code, but not the conversation that produced them.
+code, not the conversation that produced them.
 
 ---
 
 ## 1. Where things stand
 
-**GATE P0 met, P1 complete, P2 complete, GATE P2 met** — unchanged.
+**GATE P0/P1/P2 met. P3.1–P3.7 complete.** Unchanged.
 
-**P3.1–P3.7 are complete.** `src/plumb/agent/` now has the whole
-single-exception investigation machinery, built and tested entirely
-in-memory (same posture as P2's checks — no `run.sqlite` round trip):
+**The L3 persistence bridge is built and committed.** `plumb run`
+exists and runs L0→L4 end to end:
 
-| module | what |
+| piece | where |
 |---|---|
-| `agent/config.py` | `AgentConfig` — frozen Pydantic, the four thresholds |
-| `agent/schema.py` | `StopReason`, `EvidenceRef`, `Hypothesis`, `Resolution` + its code-enforced invariants; `Resolution.downgrade()` |
-| `agent/evidence.py` | `EvidenceStore` (the 7 tools' read-only backing store) + `RecordIndex` (fabrication-gate source of truth), both from `run_ingest()` output |
-| `agent/tools.py` | `Toolbox` — the 7 PRD §10.3 tools, `invoke()` dispatch with degrade-to-`ToolFailure`, `AgentCall` audit records |
-| `agent/prompts/` | `system.md` + `load_prompts()` → text + content-sensitive `sha256` |
-| `agent/model.py` | `ModelClient` protocol; `ScriptedClient` (test double); `AnthropicClient` (live, never in CI) |
-| `agent/loop.py` | `InvestigationState`, `investigate()` — LLD §7.2's loop; `forced_escalation()`, `grounding_refs()`, `SUBMIT_SCHEMA` |
-| `agent/gates.py` | `apply_downgrade_gate()`, `assert_evidence_resolves()` |
-| `agent/queue.py` | `Exception_`, `build_exception_queue()` — ranked rupees-descending |
-| `agent/runner.py` | `run_investigation()` — works the queue, applies gates in fixed order; `ablation="rules_only"` bypass; optional `batch_token_budget` |
+| L2/L3 run.sqlite writers | `store/writer.py` (record_index, "order", settlement_unit, finding, recompute_step, finding_evidence, exception, hypothesis, agent_call, resolution, resolution_evidence, record_terminal_state, run, config_snapshot) |
+| the FK-ordered write-down | `plumb/run_writer.py::write_full_run` (orchestrator, top level, not under `store/`) |
+| the L0→L4 chain | `plumb/pipeline.py::execute_run` |
+| the CLI | `plumb/cli.py` — `plumb run --data <batch> --ablation rules_only|hybrid --sample-label ...` |
+| manifest writer | `plumb/manifest_writer.py` (new field: `prompt_sha256`) |
+| git provenance | `plumb/gitinfo.py` |
+| `run_investigation` that keeps state | `agent/runner.py::run_investigation_traced` (returns `[(Resolution, InvestigationState|None)]`) |
 
-`anthropic` is now a locked dependency (imported lazily, only by
-`AnthropicClient`). Full suite green (474 passed), CI green with no API
-key — every loop test uses `ScriptedClient`, nothing hits the network.
+**`plumb run --ablation rules_only` scores end to end** via
+`plumb-eval` — real `metrics.json`, `v_conservation` balanced, not
+provisional on a clean tree.
 
-**Next: the L3 persistence bridge, then P3.8–P3.12.** See §2.
+**The rules_only HELD_OUT baseline is committed**:
+`reports/2026-09-02T05:03:55Z-5dacc52/` (config_b, seed 42, T2). See
+`ABLATION.md` §4 — `over_abstention_rate 0.341` is the GATE P3 number
+`hybrid` must beat.
 
----
-
-## 2. The persistence bridge is the next task, and it is real work (~5–6h)
-
-Deliberately deferred this session (with the user's sign-off). Nothing
-in L3 writes `run.sqlite` yet. Before P3.8 (ablation) can run — it needs
-a real `run.sqlite` for `plumb_eval.scorer.score_run` — someone must
-build:
-
-- `store/writer.py`: `write_settlement_unit`, `write_finding`,
-  `write_recompute_step`, `write_finding_evidence` (P2's gap, still
-  open), plus `write_exception`, `write_hypothesis`, `write_agent_call`,
-  `write_resolution`, `write_resolution_evidence`, `write_record_index`,
-  `write_record_terminal_state`, and the `run` row + `config_snapshot`.
-- **`record_index` population** — every canonical record key, so the
-  `exception.record_key` / `resolution_evidence.record_key` FKs resolve.
-  `RecordIndex.from_ingest` already enumerates exactly this set; the
-  writer walks the same records.
-- **id reconciliation**: `build_exception_queue` takes
-  `(finding_id, Finding)` pairs — the bridge writes findings first,
-  gets their ids, then builds the queue. `Resolution.chosen_hypothesis_index`
-  (int, in-memory) → `resolution.chosen_hypothesis_id` (FK): the bridge
-  writes hypotheses, then maps.
-- **the manifest writer** — `stub_engine.py` is the only current one and
-  says so. It owns `prompt_sha256` (from `load_prompts().sha256`),
-  `engine_config_sha256` (from `AgentConfig` — LLD §10's
-  `PlumbConfig.sha256()` shape), `llm_model`, `llm_temperature` (from
-  `model.TEMPERATURE`).
-- **the orchestration CLI** — `plumb run --data <batch> --config <cfg>`,
-  the L0→L4 chain that today exists only inside
-  `tests/plumb_eval/test_gate_p2_real_batch.py` and
-  `tests/plumb/agent/test_runner_integration.py`. `report/cli.py` gains
-  an `L3 investigate` line.
-- `record_model_turn` writes one `agent_call` per model turn carrying
-  that turn's full token usage; per-tool rows carry 0. So
-  `SUM(tokens_in + tokens_out)` over `agent_call` == true API usage.
-  The bridge must preserve that when it writes the rows.
-
-`plumb_eval` already reads `exception`, `resolution` (as `ResolutionRow`
-— only `exception_id`/`outcome`/`stop_reason`), and `agent_call`
-aggregates. `score_abstentions` already consumes `run.resolutions` for
-the `CORRECT_ABSTENTION`/`OVER_ABSTENTION` split.
-`CORRECT_RESOLUTION`/`WRONG_RESOLUTION` are still not scored (no
-proposed-correction amount in the schema — separate, unscoped).
+**The ablation prediction is committed** (`ABLATION.md` §3), before any
+`hybrid` run. `llm_only` is cut (2-arm ablation) — reasoning in
+`ABLATION.md` §1.
 
 ---
 
-## 3. Deviations added this session (all carry `# *-DEVIATION:` comments)
+## 2. The L1↔scorer contract fix (this session) — understand it before touching scoring
+
+`plumb_eval.score_all_matches` / `validate_no_fabrication` had **never
+run against real matcher output**. GATE P1 tested only determinism;
+GATE P2's test stubs `match_groups=[]`. When the bridge produced the
+first real `run.sqlite`, `score_run` aborted.
+
+Root cause: `match/engine.py` P0 groups the whole `payment_id` chain —
+the settlement identity legs (intent/payment/transfer/settlement_recon/
+bank_credit), **plus the order key**, **plus any refund/dispute/reversal
+on the payment**. `plumb_eval/truth_store.py`'s closures were
+payment+transfer(+settlement+bank) only.
+
+Fix, all in `plumb_eval` + one generator line:
+- `world.py`: `true_counterparts` now lists the intent leg too.
+- `scoring.py::_is_settlement_identity` strips the order key and the
+  `rfnd_`/`disp_`/`rvsl_`/`oln_` satellites before `score_match`'s
+  closure comparison and in `validate_no_fabrication`'s identity check.
+- Evidence keys + satellite keys are validated against
+  `record_index` (now read into `RunData.record_index_keys`) instead of
+  truth closures — L2 is a pure function over ingested data and cannot
+  fabricate; L3's own gate already checked its evidence in process.
+- `score_abstentions` dedupes per `order_key` (`is_resolvable` is a
+  per-order signal) — without this `correct_abstention_rate` exceeded 1.0.
+
+Do **not** revert any of this to "closures are leg-only". The matcher
+P1 shipped disproves that assumption.
+
+---
+
+## 3. Deferred to THIS session's follow-on (the hybrid session, needs a live API key)
+
+Cassettes (P3.10) and the determinism harness (P3.5-in-spirit) were
+**not started** — descoped when the L1↔scorer fix landed on the
+critical path. They do not block the rules_only baseline or the
+committed prediction, and the hybrid session needs to build them first
+anyway.
+
+### Hybrid-session checklist
+
+1. **Build the cassette layer** (`agent/model.py`): a third
+   `ModelClient` — `CassetteClient` (replay, request-hash → response
+   JSON under `fixtures/llm/`, `CassetteMiss` with a re-record message)
+   + `RecordingClient` (wraps `AnthropicClient`, writes cassettes).
+   `_request_key(system, messages, tools, model)` — sha256, temperature
+   is constant so not in the key. Wire `pipeline._make_client` (already
+   stubbed to import `CassetteClient`/`RecordingClient`). One test:
+   record→replay round-trip + `CassetteMiss`.
+2. **Build the L3 determinism harness**: `plumb run --repeat 5` or a
+   `plumb-eval determinism --runs ...` subcommand. For each run, hash
+   each resolution (canonical sorted-key JSON of outcome/confidence/
+   chosen_hypothesis/what_was_tried/what_would_resolve_it/hypotheses),
+   write `determinism_observation(run_index, record_key, resolution_hash)`
+   keyed by the exception subject key. `scorer.score_run` passes those
+   to `compute_metrics` when a `determinism/` sibling dir with ≥2 runs
+   exists. `compute_determinism_score` already exists and is correct.
+3. `plumb run --data data/batch_main_200 --ablation hybrid --record
+   --sample-label HELD_OUT --seed 42 --generator-config configs/config_b.yaml`
+   (needs `ANTHROPIC_API_KEY`). Commit `fixtures/llm/*`.
+4. `plumb run ... --ablation hybrid --repeat 5` → the real L3
+   `determinism_score` (expect < 1.000 — a finding, not a defect).
+5. `plumb-eval --run reports/<hybrid_run> --truth data/batch_main_200/truth`.
+6. Fill `ABLATION.md` §4 `hybrid` row and §5 the verdict:
+   - PASS iff `over_abstention_rate(hybrid) < 0.341` AND
+     `correct_abstention_rate(hybrid) == 1.000` AND
+     `silent_error_rate(hybrid) ≤ 0.194` AND `false_alarm_inr(hybrid) == 0`.
+   - If it doesn't pass: ship the honest negative per
+     `IMPLEMENTATION_PLAN.md` §5 (deepen if diagnosable, else write it
+     up plainly). Do not tune toward a pass — `config_b` is held out.
+7. Confirm CI green replaying the committed cassettes.
+
+---
+
+## 4. Deviations added this session (all carry `# *-DEVIATION:` comments)
 
 | # | Spec | What we did | Where |
 |---|---|---|---|
-| 1 | TRD §7.3 `confidence: float` 0..1 | integer basis points `confidence_bps` 0..10000, same as `MatchGroup.confidence_bps`. The no-float lint covers `agent/`. Float appears only at the `resolution.confidence` REAL write (bridge task). | `agent/config.py`, `agent/schema.py` |
-| 2 | LLD §10 `AgentConfig.temperature` | `model.py::TEMPERATURE = 0.0` module constant. Never anything but 0.0 (non-negotiable 8), and a `float` field trips the lint. | `agent/model.py` |
-| 3 | PRD §10.3 `search_intent_ledger(query)` | structured `(order_id, seller_id)` filter, ≥1 required — TRD §7.2 forbids free-form queries. | `agent/tools.py` |
-| 4 | PRD §10.4 "confidence > threshold" | `>=` — LLD §7.3's gate code is authoritative (downgrades when `<`). | `agent/gates.py` |
-| 5 | TRD §7.4 "prompts hashed into the manifest", no field named | `load_prompts().sha256` exposed; bridge task adds `prompt_sha256` to `manifest.json`. | `agent/prompts/__init__.py` |
-| 6 | TRD §7.3 `chosen_hypothesis_index` vs schema `chosen_hypothesis_id` FK | index kept in memory; id mapping is the bridge's job. | `agent/loop.py` |
+| 1 | PRD §9 3-arm ablation | 2-arm (rules_only vs hybrid); llm_only cut, descope rung 5 | `ABLATION.md` §1 |
+| 2 | TRD §7.4 "prompts hashed into manifest", no field named | new `prompt_sha256` key | `manifest_writer.py` |
+| 3 | GATE P3 "residual resolution" (no metric anywhere) | `over_abstention_rate` gates + `residual_resolution_rate` reported + guardrails | `ABLATION.md` §2, `metrics.py` |
+| 4 | `settlement_unit.period` (no source in verify's SettlementUnit) | derived `order.placed_at_utc[:7]` | `run_writer.py` |
+| 5 | canonical detail tables | only `"order"` persisted (nothing else FKs them, scorer never reads them); close-pack detail tables are P4 | `run_writer.py` |
+| 6 | `run.llm_temperature` REAL | `write_run_row`'s param is unannotated (no-float lint covers `store/`); value is `model.TEMPERATURE` (0.0) or None | `store/writer.py` |
 
-**`model_claimed_outcome`** is stored as the single `TEXT` column the
-schema already has (no `_json` variant exists). The full pre-downgrade
-`Resolution` lives in memory only. If the panel wants the entire
-claimed object persisted, that is a schema addition — not done.
-
----
-
-## 4. Design decisions that aren't in any spec
-
-- **Token attribution.** One `agent_call` per *model turn* carries that
-  turn's full usage (`Toolbox.record_model_turn`); per-tool `agent_call`
-  rows carry 0. Without this, a multi-tool turn double-counts against
-  `llm_tokens_per_1000_records`. `state.tokens_in/out` is the
-  authoritative running total for the budget check.
-
-- **`amount_at_risk_paise` is never taken from the model.**
-  `submit_resolution`'s schema doesn't include it; `finalise()` injects
-  it from `exception.amount_at_risk_paise` (PRD §10.5 "no unsourced
-  numbers"). The downgrade gate reads that injected value.
-
-- **Budget check is before the call, with the reserve** (LLD §7.2 /
-  §12.4). A single oversized turn can still blow the budget — the
-  guarantee is only that the loop makes *no further* call once
-  `budget_remaining < reserve_tokens`. Test:
-  `test_budget_reserve_stops_before_the_next_call` (57k spend, 60k
-  budget, stops) and `test_a_single_huge_turn_also_stops...`.
-
-- **An invalid `submit_resolution` is fed back, not fatal.** The loop
-  appends the `ValidationError` as an `is_error` tool result and lets
-  the model correct it within the 8-iteration cap. Only the cap and the
-  budget force a stop.
-
-- **`grounding_refs(exc, gathered)`** — an escalation's evidence chain
-  is whatever tools returned, else the finding's own evidence, else the
-  exception's subject record. A FINDING exception with no evidence and
-  nothing gathered raises `AssertionError` (upstream bug — L2 checks
-  always attach evidence).
-
-- **`_contested_key`** (queue.py) — for an `AmbiguousMatch`, the
-  exception's `record_key` is the key the candidate sets *disagree*
-  about (present in some, not all). The common chain members are not
-  the contested record.
+Carried, still live: everything in the previous handoff §5 (the
+"recorded data may be wrong" prompt commitment, ambiguous-seller stays a
+scored abstention, D08 narrow, trace re-eval is test-time only, T2
+auto-match honestly under 85%).
 
 ---
 
-## 5. Carried forward from earlier handoffs — still live
+## 5. Known rough edges (not blocking, worth a pass in P4)
 
-- **HANDOFF §2 (the P2 handoff): "the recorded data may be wrong" is a
-  first-class hypothesis.** This is now written into
-  `agent/prompts/system.md` as commitment 3, with the reasoning. Three
-  real generator bugs this build surfaced exactly because a
-  disagreement was treated as informative. Keep it in the prompt.
-
-- **Ambiguous-seller-name (old HANDOFF §4)** stays a scored
-  correct-abstention. This session routes only the matcher's own
-  `AmbiguousMatch` subsets (clean `exception.origin='UNMATCHED'` fit).
-  Routing the ambiguous-seller case needs an `exception.origin` value
-  that doesn't exist — a schema decision, still deferred. Do **not**
-  build a heuristic to resolve the seller collision.
-
-- **D08 is narrow by design** (old HANDOFF §3). `BatchCheck` stays
-  retired.
-
-- **`recompute_trace` re-evaluation is test-time only** (old HANDOFF
-  §5). Any new check's `.step()` formula must be a literal executable
-  expression over its own `inputs`.
-
-- **T2 auto-match rate is 83.5% mean, honestly under GATE P1's 85%**,
-  deliberately not tuned. Don't raise `settlement_in_flight_rate_bps`
-  without the user's sign-off.
-
-- **`ToleranceProfile` lives in `plumb/domain/tolerance.py`**, one
-  instance shared. `match/passes.py`'s three-pool mechanism is
-  authoritative.
+- `wall_clock_seconds_total` reads 0.0 for a sub-second run (second
+  precision on the timestamps) → `records_per_second` NOT_MEASURED.
+  Fine for rules_only; matters for TRD §11's 50/200/500 scaling curve.
+- `reports/` and `data/` are gitignored; headline runs are
+  `git add -f`'d. The committed baseline's `run.sqlite` is 1.3 MB.
+- No `history.jsonl`, no CI expansion (still just `uv run pytest`),
+  no `Makefile`, no `ARCHITECTURE.md` — all P4.
 
 ---
 
-## 6. Determinism note for the next session
-
-L3's `determinism_score` will be **below 1.000** even at temperature 0
-(no API seed). That is a finding to report (non-negotiable 8), and the
-contrast with L1/L2's exact 1.000 is the architecture argument. There
-is **no** 1.000 assertion on L3 anywhere in the tests, deliberately.
-The 5-run L3 determinism harness (hash each record's final resolution,
-per PRD §7.9) is P3.10/P3.11 work — it needs the persistence bridge
-first (the harness reads `determinism_observation` rows).
-
-The user drafts `DEVLOG.md` themselves — flag what broke, don't write
-it for them. Nothing broke this session that isn't captured above.
-
----
-
-## 7. Session ritual
+## 6. Session ritual
 
 Push and confirm CI before treating a session's work as done.
+`DEVLOG.md` is the user's own — flag what broke, don't write it.
