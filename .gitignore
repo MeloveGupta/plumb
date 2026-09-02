@@ -10,3 +10,10 @@ build/
 
 # ground truth must never sit alongside engine test fixtures — TRD §3.2
 data/*/truth/
+
+# generated batches are regenerable from seed+config; don't commit them
+data/
+
+# run outputs: local runs land here. The committed headline runs are
+# force-added (git add -f reports/<run_id>/); everything else is noise.
+reports/
