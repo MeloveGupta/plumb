@@ -103,7 +103,7 @@ auto-resolving.
 
 ### `rules_only` — HELD_OUT (`config_b`, seed 42, tier T2, 200 records)
 
-Run `reports/2026-09-02T05:03:55Z-5dacc52/` — clean tree, **not
+Run `reports/2026-09-03T05:26:40Z-8abdcbb/` — clean tree, **not
 provisional**. Reproduce:
 
 ```
@@ -132,7 +132,7 @@ directory is the committed artifact.
 | `exceptions_total` | 113 | 113 residual + finding exceptions, all escalated |
 | L3 `determinism_score` | `NOT_MEASURED` | n/a — no L3 in this arm |
 
-Full table: `reports/2026-09-02T05:03:55Z-5dacc52/metrics.md`.
+Full table: `reports/2026-09-03T05:26:40Z-8abdcbb/metrics.md`.
 
 Note `correct_abstention_rate = 1.000` is the ceiling — the `hybrid`
 guardrail *"≥ rules_only"* means `hybrid` must also be exactly 1.000,

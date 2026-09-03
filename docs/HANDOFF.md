@@ -27,7 +27,7 @@ exists and runs L0→L4 end to end:
 provisional on a clean tree.
 
 **The rules_only HELD_OUT baseline is committed**:
-`reports/2026-09-02T05:03:55Z-5dacc52/` (config_b, seed 42, T2). See
+`reports/2026-09-03T05:26:40Z-8abdcbb/` (config_b, seed 42, T2). See
 `ABLATION.md` §4 — `over_abstention_rate 0.341` is the GATE P3 number
 `hybrid` must beat.
 

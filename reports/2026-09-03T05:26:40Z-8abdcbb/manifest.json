@@ -1,0 +1,19 @@
+{
+  "ablation_config": "rules_only",
+  "engine_config_sha256": "c4ebc489cafe321937bc21dda10cfbb6d9222bd277c5253da401ead17bf4e6fb",
+  "generator_config": "config_b.yaml",
+  "generator_config_sha256": "06e4cf6aa33bd19b167d4d3e3c0cee7f95198ba6d907617bb6198132f4d48794",
+  "generator_seed": 42,
+  "git_dirty": false,
+  "git_sha": "8abdcbbeb04aa4b6636d8452fdc88913352c16d5",
+  "llm_model": null,
+  "llm_temperature": null,
+  "prompt_sha256": "838d08bb2682254fbc47386f3620a2631f8ca4f218cad20891761a5cc20cdc3e",
+  "python_version": "3.12.3",
+  "rules_module_version": "2026-08-23",
+  "run_id": "2026-09-03T05:26:40Z-8abdcbb",
+  "sample_label": "HELD_OUT",
+  "schema_sha256": "4a53c41b84778247da8e18f7638e41be28ec566af52b697539aff593b73fda47",
+  "tolerance_profile": "default_v1",
+  "uv_lock_sha256": "2d1a20add32c30a4854a8540d2e0523f46b3628881df500f2a0242a7e6884155"
+}
