@@ -36,6 +36,7 @@ from plumb.ingest.pipeline import run_ingest
 from plumb.manifest_writer import write_manifest
 from plumb.match.engine import MatchEngine, RecordSet
 from plumb.rules.ratebook import RateBook, default_ratebook
+from plumb.report.pack import write_report_pack
 from plumb.run_writer import write_full_run
 from plumb.store.ddl import SCHEMA_PATH, open_run_db
 from plumb.verify.checks.d01 import D01CommissionRateDrift
@@ -223,6 +224,8 @@ def execute_run(
         llm_model=llm_model,
         llm_temperature=llm_temperature,
     )
+
+    write_report_pack(run_dir)  # close.md, exceptions.md, *.jsonl
 
     outcomes: dict[str, int] = {}
     for _exc, resolution, _state in resolved:

@@ -58,7 +58,15 @@ from plumb.store.writer import (
     write_hypothesis,
     write_match_group_row,
     write_match_member,
+    write_bank_credit_row,
+    write_dispute_row,
+    write_intent_row,
     write_order_row,
+    write_payment_row,
+    write_refund_row,
+    write_reversal_row,
+    write_settlement_recon_row,
+    write_transfer_row,
     write_recompute_step,
     write_record_index,
     write_record_terminal_state,
@@ -172,19 +180,58 @@ def write_full_run(
         all_keys.append(key)
         write_record_index(conn, key, _entity_type(record), source_id)
 
-    # -- "order" rows (settlement_unit.order_key FKs "order")
+    # -- canonical detail tables, in FK order (order -> intent/payment ->
+    #    refund/transfer/dispute -> reversal -> settlement_recon -> bank_credit).
+    #    The report pack (close.md waterfall) reads these; the scorer does not.
+    by_type: dict[type, list] = {}
     for record, _side in canonical:
-        if isinstance(record, Order):
-            write_order_row(
-                conn,
-                record_key=record.order_id,
-                seller_id=record.seller_id,
-                gross_paise=record.gross_paise,
-                category=record.category,
-                placed_at_utc=record.placed_at_utc,
-                status=record.status,
-                is_interstate=record.is_interstate,
-            )
+        by_type.setdefault(type(record), []).append(record)
+
+    for o in by_type.get(Order, []):
+        write_order_row(
+            conn, record_key=o.order_id, seller_id=o.seller_id, gross_paise=o.gross_paise,
+            category=o.category, placed_at_utc=o.placed_at_utc, status=o.status, is_interstate=o.is_interstate,
+        )
+    for it in by_type.get(Intent, []):
+        write_intent_row(
+            conn, record_key=it.intent_id, order_key=it.order_id, seller_id=it.seller_id,
+            expected_seller_paise=it.expected_seller_amount_paise,
+            expected_commission_paise=it.expected_commission_paise,
+            commission_bps_applied=it.commission_rate_applied_bps,
+            expected_tcs_paise=it.expected_tcs_paise, expected_tds_paise=it.expected_tds_paise,
+            rate_card_version=it.rate_card_version,
+        )
+    for p in by_type.get(Payment, []):
+        write_payment_row(
+            conn, record_key=p.payment_id, order_key=p.order_id, amount_paise=p.amount_paise,
+            method=p.method, status=p.status, captured_at_utc=p.captured_at_utc,
+            fee_paise=p.fee_paise, tax_paise=p.tax_paise,
+        )
+    for r in by_type.get(Refund, []):
+        write_refund_row(conn, record_key=r.refund_id, payment_key=r.payment_id,
+                         amount_paise=r.amount_paise, created_at_utc=r.created_at_utc)
+    for t in by_type.get(Transfer, []):
+        write_transfer_row(
+            conn, record_key=t.transfer_id, payment_key=t.payment_id, linked_account_id=t.linked_account_id,
+            amount_paise=t.amount_paise, on_hold=t.on_hold, on_hold_until_utc=t.on_hold_until_utc,
+            settled_at_utc=t.settled_at_utc,
+        )
+    for d in by_type.get(Dispute, []):
+        write_dispute_row(conn, record_key=d.dispute_id, payment_key=d.payment_id, amount_paise=d.amount_paise,
+                          status=d.status, deducted_amount_paise=d.deducted_amount_paise)
+    for rv in by_type.get(Reversal, []):
+        write_reversal_row(conn, record_key=rv.reversal_id, transfer_key=rv.transfer_id,
+                           amount_paise=rv.amount_paise, created_at_utc=rv.created_at_utc)
+    for sr in by_type.get(SettlementRecon, []):
+        write_settlement_recon_row(
+            conn, record_key=sr.settlement_recon_id, entity_key=sr.entity_key, entity_type=sr.entity_type,
+            settlement_id=sr.settlement_id, utr=sr.utr, amount_paise=sr.amount_paise, fee_paise=sr.fee_paise,
+            tax_paise=sr.tax_paise, debit_paise=sr.debit_paise, credit_paise=sr.credit_paise,
+            settled_at_utc=sr.settled_at_utc, dispute_key=sr.dispute_key,
+        )
+    for bc in by_type.get(BankCredit, []):
+        write_bank_credit_row(conn, record_key=bc.bank_credit_id, bank_ref=bc.bank_ref, utr=bc.utr,
+                              amount_paise=bc.amount_paise, credited_on=bc.credited_on, narration=bc.narration)
 
     # -- match_group / match_member (settlement_unit.match_id FKs match_group)
     for index, group in enumerate(match_result.groups):

@@ -157,6 +157,76 @@ def write_order_row(
     )
 
 
+def _insert(conn: sqlite3.Connection, table: str, row: dict) -> None:
+    cols = ", ".join(row)
+    marks = ", ".join("?" for _ in row)
+    conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", tuple(row.values()))
+
+
+def write_intent_row(conn, *, record_key, order_key, seller_id, expected_seller_paise,
+                     expected_commission_paise, commission_bps_applied, expected_tcs_paise,
+                     expected_tds_paise, rate_card_version) -> None:
+    _insert(conn, "intent", dict(
+        record_key=record_key, order_key=order_key, seller_id=seller_id,
+        expected_seller_paise=expected_seller_paise, expected_commission_paise=expected_commission_paise,
+        commission_bps_applied=commission_bps_applied, expected_tcs_paise=expected_tcs_paise,
+        expected_tds_paise=expected_tds_paise, rate_card_version=rate_card_version,
+    ))
+
+
+def write_payment_row(conn, *, record_key, order_key, amount_paise, method, status,
+                      captured_at_utc, fee_paise, tax_paise) -> None:
+    _insert(conn, "payment", dict(
+        record_key=record_key, order_key=order_key, amount_paise=amount_paise, method=method,
+        status=status, captured_at_utc=captured_at_utc, fee_paise=fee_paise, tax_paise=tax_paise,
+    ))
+
+
+def write_refund_row(conn, *, record_key, payment_key, amount_paise, created_at_utc) -> None:
+    _insert(conn, "refund", dict(
+        record_key=record_key, payment_key=payment_key, amount_paise=amount_paise, created_at_utc=created_at_utc,
+    ))
+
+
+def write_transfer_row(conn, *, record_key, payment_key, linked_account_id, amount_paise,
+                       on_hold, on_hold_until_utc, settled_at_utc) -> None:
+    _insert(conn, "transfer", dict(
+        record_key=record_key, payment_key=payment_key, linked_account_id=linked_account_id,
+        amount_paise=amount_paise, on_hold=int(on_hold), on_hold_until_utc=on_hold_until_utc,
+        settled_at_utc=settled_at_utc,
+    ))
+
+
+def write_reversal_row(conn, *, record_key, transfer_key, amount_paise, created_at_utc) -> None:
+    _insert(conn, "reversal", dict(
+        record_key=record_key, transfer_key=transfer_key, amount_paise=amount_paise, created_at_utc=created_at_utc,
+    ))
+
+
+def write_dispute_row(conn, *, record_key, payment_key, amount_paise, status, deducted_amount_paise) -> None:
+    _insert(conn, "dispute", dict(
+        record_key=record_key, payment_key=payment_key, amount_paise=amount_paise, status=status,
+        deducted_amount_paise=deducted_amount_paise,
+    ))
+
+
+def write_settlement_recon_row(conn, *, record_key, entity_key, entity_type, settlement_id, utr,
+                               amount_paise, fee_paise, tax_paise, debit_paise, credit_paise,
+                               settled_at_utc, dispute_key) -> None:
+    _insert(conn, "settlement_recon", dict(
+        record_key=record_key, entity_key=entity_key, entity_type=entity_type, settlement_id=settlement_id,
+        utr=utr, amount_paise=amount_paise, fee_paise=fee_paise, tax_paise=tax_paise,
+        debit_paise=debit_paise, credit_paise=credit_paise, settled_at_utc=settled_at_utc, dispute_key=dispute_key,
+    ))
+
+
+def write_bank_credit_row(conn, *, record_key, bank_ref, utr, amount_paise, credited_on, narration) -> None:
+    _insert(conn, "bank_credit", dict(
+        record_key=record_key, bank_ref=bank_ref, utr=utr, amount_paise=amount_paise,
+        credited_on=credited_on, narration=narration,
+    ))
+
+
 # --- §3.5 verification --------------------------------------------------------
 
 
