@@ -85,13 +85,15 @@ def validate_no_fabrication(run: RunData, truth: TruthStore) -> None:
       fabricating a settlement.
     - finding / resolution evidence keys are pointers into the ingested
       data. L2 is a pure function over that data and cannot invent a
-      key; L3's fabrication gate already checked its evidence in
-      process. Here they are validated against record_index -- the
-      engine's own record of what it ingested -- which still catches a
-      hallucinated key (it was never ingested, so it isn't there).
-      Checking these against truth's closures instead would wrongly
-      reject legitimate dispute / refund / reversal evidence, none of
-      which is a settlement leg.
+      key; L3's fabrication gate (agent/gates.py) already checked its
+      evidence in process and aborts before any persist. Here they are
+      validated against record_index -- the engine's own record of what
+      it ingested, which is TRD §8.3's "absent from the dataset"
+      verbatim -- so a hallucinated key (never ingested, so never in
+      record_index) still fails the run, and this is the persisted
+      backstop for the in-process L3 gate. Checking these against
+      truth's closures instead would wrongly reject legitimate dispute
+      / refund / reversal evidence, none of which is a settlement leg.
     """
     order_keys = set(truth.order_keys())
 
@@ -106,6 +108,7 @@ def validate_no_fabrication(run: RunData, truth: TruthStore) -> None:
         (identity_keys if _is_settlement_identity(exc.record_key, order_keys) else other_keys).add(exc.record_key)
     for finding in run.findings:
         other_keys.update(finding.evidence_keys)
+    other_keys.update(run.resolution_evidence_keys)
 
     for key in sorted(identity_keys):
         truth.counterpart_closure(key)  # raises TruthJoinError on the first offender

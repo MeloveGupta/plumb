@@ -150,6 +150,76 @@ def test_validate_no_fabrication_raises_on_an_unknown_record_key(tmp_path):
         validate_no_fabrication(run, truth)
 
 
+def test_a_match_with_a_substituted_leg_still_scores_false_positive(tmp_path):
+    """The _is_settlement_identity strip (order + intent + refund/dispute/
+    reversal) must not turn a genuinely wrong match into a TRUE_POSITIVE.
+    Here mtch_00002 is order 2's group but with order 1's payment key
+    swapped in -- the stripped members still carry pay_00001, which no
+    single closure contains alongside order 2's other legs -> FALSE_POSITIVE.
+    Hand-computed: after the strip, members = {int_00002, pay_00001,
+    txfr_00002}; anchor = int_00002 -> closure = {int_00002, pay_00002,
+    txfr_00002}; members != closure.
+    """
+    from _fixtures import (
+        insert_leg,
+        insert_match,
+        insert_order,
+        insert_run_row,
+        insert_settlement_unit,
+        insert_truth_record,
+        make_run_db,
+        make_truth_db,
+    )
+
+    run_conn = make_run_db(tmp_path / "run.sqlite")
+    truth_conn = make_truth_db(tmp_path / "truth.sqlite")
+    insert_run_row(run_conn)
+
+    for key in ("ord_00001", "int_00001", "pay_00001", "txfr_00001"):
+        (insert_order if key == "ord_00001" else insert_leg)(run_conn, key)
+    for key in ("ord_00002", "int_00002", "pay_00002", "txfr_00002"):
+        (insert_order if key == "ord_00002" else insert_leg)(run_conn, key)
+
+    insert_match(run_conn, "mtch_00002", ["ord_00002", "int_00002", "pay_00001", "txfr_00002"])  # wrong payment
+    insert_settlement_unit(run_conn, "unit_00002", "ord_00002", match_id="mtch_00002")
+    insert_truth_record(truth_conn, "ord_00001", ["int_00001", "pay_00001", "txfr_00001"], {"commission_paise": 0, "tcs_paise": 0, "tds_paise": 0})
+    insert_truth_record(truth_conn, "ord_00002", ["int_00002", "pay_00002", "txfr_00002"], {"commission_paise": 0, "tcs_paise": 0, "tds_paise": 0})
+    run_conn.commit()
+    truth_conn.commit()
+
+    run = RunData.from_db(run_conn)
+    truth = TruthStore.from_db(truth_conn)
+    run_conn.close()
+    truth_conn.close()
+
+    validate_no_fabrication(run, truth)  # pay_00001 is a real leg -> no fabrication
+    scored = {s.match_id: s for s in score_all_matches(run, truth)}
+    assert scored["mtch_00002"].verdict == "FALSE_POSITIVE"
+
+
+def test_validate_no_fabrication_backstops_resolution_evidence(tmp_path):
+    """resolution_evidence.record_key has an FK to record_index, so a
+    hallucinated L3 evidence key cannot be written to a well-formed
+    run.sqlite. validate_no_fabrication is the score-time backstop for a
+    run.sqlite that wasn't produced by our writer (FKs off, hand-edited):
+    an evidence key absent from record_index fails the run.
+    """
+    run = RunData(
+        run_id="r", started_at_utc="", finished_at_utc=None,
+        match_groups=[], settlement_units=[], findings=[], exceptions=[], resolutions=[],
+        agent_call_tokens_total=0, agent_call_count=0,
+        record_index_keys=frozenset({"pay_00001"}),
+        resolution_evidence_keys=frozenset({"pay_00001", "pay_99999"}),  # pay_99999 never ingested
+    )
+    truth = TruthStore(
+        _closure_by_key={"pay_00001": frozenset({"pay_00001"})},
+        _order_key_by_member={"pay_00001": "ord_00001"},
+        _obligation_by_key={}, _resolvable_by_key={}, _defects_by_key={},
+    )
+    with pytest.raises(TruthJoinError, match="pay_99999"):
+        validate_no_fabrication(run, truth)
+
+
 @pytest.fixture
 def defect_scenario(tmp_path):
     """Four orders covering score_defects' four outcomes: correctly

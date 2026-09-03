@@ -125,6 +125,13 @@ def insert_resolution(
     )
 
 
+def insert_resolution_evidence(conn, exception_id, record_key, role="evidence"):
+    conn.execute(
+        "INSERT INTO resolution_evidence (exception_id, record_key, role) VALUES (?, ?, ?)",
+        (exception_id, record_key, role),
+    )
+
+
 def insert_agent_call(conn, call_id, exception_id, tokens_in, tokens_out, iteration=1, tool="test_tool"):
     conn.execute(
         """INSERT INTO agent_call (call_id, exception_id, iteration, tool, args_json, result_sha256,
