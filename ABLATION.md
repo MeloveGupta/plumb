@@ -3,7 +3,18 @@
 **Status:** prediction committed 2 Sep 2026, before any `hybrid` run.
 `rules_only` measured 2 Sep. `hybrid` pending its own session (needs a
 live `ANTHROPIC_API_KEY`; this repo's CI runs the arm from recorded
-cassettes).
+cassettes). See `docs/RUN_HYBRID.md` for the three commands.
+
+---
+
+## 0. The instrument
+
+`plumb_eval` — the scorer every number below comes from — was corrected
+on 2 Sep (`7fba72e`), *after* the prediction was written, because it
+could not score a real run. The closure model, the fix, and the
+justification for both changes are in **`docs/SCORING.md`**. Every
+number here is the first measurement taken with the corrected
+instrument; there is no "before" to compare against.
 
 ---
 
@@ -138,14 +149,53 @@ determinism harness.
 
 ## 5. Verdict
 
-`PENDING` — written once both arms are measured. Per
+`PENDING` — written once `hybrid` is measured. Per
 `IMPLEMENTATION_PLAN.md` §5, if `hybrid` does not beat `rules_only` the
 honest negative ships plainly; if the cause is diagnosable, L3 is
 deepened first. Whichever it is will be stated here with its reason.
 
 ---
 
-## 6. L1/L2 determinism = 1.000
+## 6. Interpretation — the gate is soft; the guardrails are the finding
+
+The committed GATE P3 criterion (§2) is
+`over_abstention_rate(hybrid) < over_abstention_rate(rules_only)`. That
+prediction is not moved. But it should be read for what it is: **a soft
+gate, close to structurally guaranteed to pass.** `rules_only` escalates
+*every* exception (`residual_resolution_rate` 0.000,
+`escalated_unresolved_rate` 1.000); its `over_abstention_rate` of 0.341
+is every genuinely-resolvable exception being escalated. Any exception
+`hybrid` resolves — correctly or not — removes it from the
+over-abstention count and lowers the rate. Direction is nearly
+foreordained; only a `hybrid` that resolves essentially nothing could
+fail it.
+
+So the direction of `over_abstention_rate` is not the finding. The
+substantive results are:
+
+1. **Do the guardrails hold?** `hybrid` must keep
+   `correct_abstention_rate` at exactly **1.000** — it must not buy a
+   lower over-abstention rate by *wrongly resolving* the ~15 % of
+   settlements that are genuinely in-flight and unresolvable from this
+   batch. And `silent_error_rate` (0.194) and `false_alarm_inr` (0)
+   must not rise — L3 operates only on the residual and must introduce
+   no new wrong answers. These are the real pass/fail.
+
+2. **Magnitude.** How much of the residual does L3 actually resolve
+   (`residual_resolution_rate`), and how far does `over_abstention_rate`
+   fall? A drop from 0.341 to 0.30 is a different result from a drop to
+   0.05.
+
+3. **L3 `determinism_score`.** Expected < 1.000 (the Anthropic API has
+   no seed). Reported as a finding, contrasted against L1/L2's exact
+   1.000 (§7). Not engineered around.
+
+Naming a soft gate as soft is a stronger submission than claiming a
+pass it could not have failed.
+
+---
+
+## 7. L1/L2 determinism = 1.000
 
 Not re-measured here — it is already proven:
 `tests/plumb/match/test_determinism_harness.py` runs the L1 pipeline 5×

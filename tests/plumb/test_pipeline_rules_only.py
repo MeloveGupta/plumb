@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from plumb.pipeline import execute_run
+from plumb.pipeline import execute_run, run_repeated
 
 from plumb_gen.config_loader import load_generator_config
 from plumb_gen.io import write_sources
@@ -103,3 +103,30 @@ def test_manifest_has_the_reproducibility_fields(batch, tmp_path):
 
     on_disk = hashlib.sha256(Path("schema/run.sql").read_bytes()).hexdigest()
     assert manifest["schema_sha256"] == on_disk
+
+
+def test_repeated_rules_only_run_is_perfectly_deterministic(batch, tmp_path):
+    """The determinism harness itself: rules_only has no LLM, so three
+    runs must produce byte-identical resolutions -> determinism_score
+    1.000. (The hybrid arm is expected < 1.000 -- no API seed -- and is
+    measured in the keyed hybrid session.)"""
+    result = run_repeated(
+        repeat=3,
+        data_dir=batch,
+        out_dir=tmp_path / "reports",
+        ablation="rules_only",
+        sample_label="IN_SAMPLE",
+        generator_seed=42,
+        generator_config=Path("configs/config_a.yaml"),
+        as_of=date(2026, 8, 26),
+    )
+    assert result["runs"] == 3
+    assert result["exceptions_total"] > 0
+    assert result["determinism_score"] == 1.0
+    assert result["exceptions_identical_across_all_runs"] == result["exceptions_total"]
+    assert len(set(result["run_ids"])) == 3  # distinct run dirs
+
+    import json
+
+    written = json.loads((tmp_path / "reports" / result["run_ids"][0] / "determinism.json").read_text())
+    assert written["determinism_score"] == 1.0

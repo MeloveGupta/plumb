@@ -16,6 +16,7 @@ inject a ScriptedClient via `client`. `rules_only` never constructs one.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from importlib import metadata
@@ -105,6 +106,7 @@ def execute_run(
     client: ModelClient | None = None,
     batch_token_budget: int | None = None,
     now: datetime | None = None,
+    run_id_suffix: str = "",
 ) -> RunOutcome:
     if ablation not in ("rules_only", "hybrid"):
         raise ValueError(f"ablation must be rules_only or hybrid, got {ablation!r}")
@@ -114,7 +116,7 @@ def execute_run(
     cfg = agent_config or AgentConfig()
     started = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     sha = head_sha()
-    run_id = f"{started}-{sha[:7]}"
+    run_id = f"{started}-{sha[:7]}" + (f"-{run_id_suffix}" if run_id_suffix else "")
     run_dir = out_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -233,3 +235,75 @@ def execute_run(
         exception_count=len(queue),
         resolution_outcomes=outcomes,
     )
+
+
+def _resolution_hashes(run_sqlite: Path) -> dict[str, str]:
+    """exception_id -> a hash of the resolution's *semantic* content
+    (never the generated hypothesis ids, which differ per run). This is
+    what the L3 determinism score compares across runs."""
+    import sqlite3
+
+    conn = sqlite3.connect(run_sqlite)
+    hyps: dict[str, list] = {}
+    for exc_id, rank, statement, supports_json in conn.execute(
+        "SELECT exception_id, rank, statement, supports_json FROM hypothesis ORDER BY exception_id, rank"
+    ):
+        hyps.setdefault(exc_id, []).append({"rank": rank, "statement": statement, "supports": supports_json})
+
+    out: dict[str, str] = {}
+    for row in conn.execute(
+        "SELECT exception_id, outcome, confidence, iterations_used, stop_reason, what_was_tried, "
+        "what_would_resolve_it, was_downgraded, downgrade_reason FROM resolution ORDER BY exception_id"
+    ):
+        exc_id = row[0]
+        payload = json.dumps(
+            {
+                "outcome": row[1], "confidence": row[2], "iterations_used": row[3], "stop_reason": row[4],
+                "what_was_tried": row[5], "what_would_resolve_it": row[6],
+                "was_downgraded": row[7], "downgrade_reason": row[8], "hypotheses": hyps.get(exc_id, []),
+            },
+            sort_keys=True,
+        )
+        out[exc_id] = hashlib.sha256(payload.encode()).hexdigest()
+    conn.close()
+    return out
+
+
+def run_repeated(*, repeat: int, **kwargs) -> dict:
+    """Run the L3 pipeline `repeat` times against the same batch and
+    score L3 determinism (PRD §7.9: identical resolutions across all
+    runs / total). Expect < 1.000 -- the Anthropic API has no seed;
+    that is a finding, not a defect (non-negotiable 8). Writes
+    determinism.json into the first run dir and returns it."""
+    if repeat < 2:
+        raise ValueError("run_repeated needs repeat >= 2")
+
+    outcomes = [execute_run(run_id_suffix=f"r{i + 1}", **kwargs) for i in range(repeat)]
+
+    observations: list[tuple[int, str, str]] = []
+    for run_index, outcome in enumerate(outcomes):
+        for exc_id, h in _resolution_hashes(outcome.run_dir / "run.sqlite").items():
+            observations.append((run_index, exc_id, h))
+
+    total = outcomes[0].exception_count
+    hashes_by_exc: dict[str, set[str]] = {}
+    for _run_index, exc_id, h in observations:
+        hashes_by_exc.setdefault(exc_id, set()).add(h)
+    identical = sum(1 for hs in hashes_by_exc.values() if len(hs) == 1)
+    score = identical / total if total else None
+
+    result = {
+        "ablation": outcomes[0].ablation,
+        "runs": repeat,
+        "exceptions_total": total,
+        "exceptions_identical_across_all_runs": identical,
+        "determinism_score": score,
+        "run_ids": [o.run_id for o in outcomes],
+        "note": (
+            "L3 determinism. The Anthropic API has no seed, so < 1.000 is expected and is a "
+            "finding, not a defect (non-negotiable 8). L1/L2 determinism is 1.000 -- see "
+            "tests/plumb/match/test_determinism_harness.py."
+        ),
+    }
+    (outcomes[0].run_dir / "determinism.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return result
