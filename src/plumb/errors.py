@@ -27,6 +27,21 @@ class BudgetExhausted(PlumbError):
     crash (TRD §7.1)."""
 
 
+class CassetteMiss(PlumbError):
+    """L3, replay mode -- no recorded response for this request under
+    fixtures/llm/. CI runs in replay (TRD §9.1: "a panelist forking the
+    repo must get a green build"); a miss means the cassettes are stale
+    and must be re-recorded locally with an API key."""
+
+    def __init__(self, request_key: str) -> None:
+        self.request_key = request_key
+        super().__init__(
+            f"no cassette for request {request_key[:12]} under fixtures/llm/. "
+            f"Re-record locally with an API key: plumb run --ablation hybrid --record. "
+            f"Inspect the request in reports/<run_id>/agent_calls.jsonl"
+        )
+
+
 class FabricationError(PlumbError):
     """L3, fatal -- LLD §7.3/§9. A resolution's evidence chain names a
     record_key that isn't in the run's record index. The model invented
