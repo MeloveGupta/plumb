@@ -1,0 +1,24 @@
+{
+  "stop_reason": "tool_calls",
+  "text": "",
+  "tool_calls": [
+    {
+      "args": {
+        "transfer_id": "txfr_00132"
+      },
+      "id": "call-d7ed92a1-fd32-4163-890c-b914c2b58aff",
+      "name": "fetch_transfer"
+    },
+    {
+      "args": {
+        "order_id": "ord_00132"
+      },
+      "id": "call-f81f4f30-83be-4654-9989-07f336f174a7",
+      "name": "search_intent_ledger"
+    }
+  ],
+  "usage": {
+    "input_tokens": 2462,
+    "output_tokens": 277
+  }
+}

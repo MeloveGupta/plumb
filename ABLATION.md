@@ -1,11 +1,12 @@
 # Ablation — does the LLM earn its place on the residual?
 
 **Status:** prediction committed 2 Sep 2026, before any `hybrid` run.
-`rules_only` measured 2 Sep. `hybrid` run 3 Sep against
-`nvidia/nemotron-3.5-lightning-30b-a3b` (build.nvidia.com — see the L3
-model deviation in `docs/PLUMB_TRD.md` §7 / `ARCHITECTURE.md`). CI
-replays the recorded cassettes with no key. `docs/RUN_HYBRID.md` has
-the commands.
+`rules_only` measured (HELD_OUT, §4). `hybrid` **attempted 4 Sep**
+against `nvidia/nemotron-3.5-lightning-30b-a3b` (build.nvidia.com — see
+the L3 model deviation in `docs/PLUMB_TRD.md` §7 / `ARCHITECTURE.md`);
+the free-tier rate limit stopped it finishing — see §4 / §5.
+`docs/RUN_HYBRID.md` has the commands; CI replays whatever cassettes
+are committed, with no key.
 
 ---
 
@@ -143,18 +144,59 @@ in-flight settlements. That is a deliberately hard bar.
 
 ### `hybrid` — HELD_OUT
 
-`PENDING — hybrid session.` Recorded cassettes under `fixtures/llm/`,
-then the same three commands with `--ablation hybrid`, plus the 5-run
-determinism harness.
+**Attempted 4 Sep against `nvidia/nemotron-3.5-lightning-30b-a3b`
+(build.nvidia.com). Not completed — measurement pending a
+rate-unlimited key.**
+
+The record run
+(`plumb run --ablation hybrid --model-mode record` on the 113-exception
+held-out batch) was launched but could not finish inside the submission
+window. build.nvidia.com's free tier throttled sustained tool-loop
+traffic to roughly **one model turn per minute** under exponential
+backoff; a full batch is ~450 turns (113 exceptions × up to 8 rounds),
+i.e. several hours to over a day. 6 cassettes are recorded and
+committed under `fixtures/llm/`; the run is resumable
+(`RecordingClient` skips a request that already has a cassette).
+
+Everything else is in place and CI-green:
+- `NvidiaClient` drives the loop end to end (verified on live
+  exceptions — the model calls tools, accumulates evidence, and either
+  submits or is forced to escalate at the 8-round cap).
+- The cassette record/replay layer, the `--repeat N` L3 determinism
+  harness, and the ablation metrics all work offline.
+- `plumb-eval` scores a real `run.sqlite` (proven by the `rules_only`
+  HELD_OUT baseline above).
+
+`docs/RUN_HYBRID.md` is the exact command sequence. On a key without
+the free-tier throttle it is one run away from filling this row and §5.
 
 ---
 
 ## 5. Verdict
 
-`PENDING` — written once `hybrid` is measured. Per
-`IMPLEMENTATION_PLAN.md` §5, if `hybrid` does not beat `rules_only` the
-honest negative ships plainly; if the cause is diagnosable, L3 is
-deepened first. Whichever it is will be stated here with its reason.
+**Deferred — not a negative result, an unrun one.** The architecture
+question (`hybrid` vs `rules_only` on residual resolution) is not
+answered because the `hybrid` measurement did not complete: the model
+provider available at submission time
+(`nvidia/nemotron-3.5-lightning-30b-a3b` on build.nvidia.com's free
+tier) rate-limited the investigation loop below a throughput that could
+finish a held-out batch.
+
+What *is* established:
+- `rules_only` HELD_OUT, fully measured (§4): the deterministic layers
+  catch 56/56 injected defects with zero false alarms, and escalate
+  every one of the 113 residual exceptions — `over_abstention_rate`
+  0.341, `silent_error_rate` 0.194.
+- L1/L2 `determinism_score` = 1.000 (§7).
+- The complete L3 machinery — tools, loop, gates, structured output,
+  provider-neutral model seam — running against a live model, with a
+  cassette layer that keeps CI green with no key.
+- The prediction (§3), committed before any `hybrid` run and unchanged.
+
+Per `IMPLEMENTATION_PLAN.md` §5 the honest state ships plainly: the
+deterministic layers do measurable work on the held-out set; whether
+L3 adds to it on the residual is the one number a keyed run still owes.
+The soft-gate framing in §6 stands regardless of that number.
 
 ---
 

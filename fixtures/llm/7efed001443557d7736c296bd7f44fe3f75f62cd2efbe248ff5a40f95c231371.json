@@ -1,0 +1,25 @@
+{
+  "stop_reason": "tool_calls",
+  "text": "",
+  "tool_calls": [
+    {
+      "args": {
+        "payment_id": "pay_00132"
+      },
+      "id": "call-2de8577d-9e1f-4dec-a5d5-7fcd31795225",
+      "name": "fetch_payment"
+    },
+    {
+      "args": {
+        "as_of": "2024-01-01",
+        "seller_id": "sel_00010"
+      },
+      "id": "call-26031607-77bc-477f-a61c-214f541f580a",
+      "name": "fetch_rate_card"
+    }
+  ],
+  "usage": {
+    "input_tokens": 2735,
+    "output_tokens": 136
+  }
+}

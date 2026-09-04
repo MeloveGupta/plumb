@@ -1,0 +1,18 @@
+{
+  "stop_reason": "tool_calls",
+  "text": "",
+  "tool_calls": [
+    {
+      "args": {
+        "as_of": "2026-07-21",
+        "seller_id": "sel_00010"
+      },
+      "id": "call-ac874828-0ecc-4170-a763-efd1ca36de3b",
+      "name": "fetch_rate_card"
+    }
+  ],
+  "usage": {
+    "input_tokens": 5489,
+    "output_tokens": 3727
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "stop_reason": "tool_calls",
+  "text": "",
+  "tool_calls": [
+    {
+      "args": {
+        "dispute_id": "disp_00001"
+      },
+      "id": "call-4a29a9f4-c323-427f-be77-443ac4144b68",
+      "name": "fetch_dispute"
+    },
+    {
+      "args": {
+        "seller_id": "sel_00010"
+      },
+      "id": "call-7674cb65-cc77-468c-918a-0c17feb36f16",
+      "name": "search_intent_ledger"
+    }
+  ],
+  "usage": {
+    "input_tokens": 4087,
+    "output_tokens": 822
+  }
+}

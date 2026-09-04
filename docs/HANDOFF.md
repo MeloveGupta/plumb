@@ -8,10 +8,18 @@ the committed code, not the conversation that produced them.
 ## 1. Where things stand
 
 **GATE P0/P1/P2 met. P3.1–P3.7 complete. Persistence bridge, cassettes,
-P4 close pack all built and committed.** The only open item is the
-`hybrid` ablation run, which needs a live `NVIDIA_API_KEY` (L3 now runs
-against build.nvidia.com — `docs/PLUMB_TRD.md` §7 deviation) — see §3
-and `docs/RUN_HYBRID.md`.
+P4 (README, ARCHITECTURE.md, `make reproduce`, close pack) all built
+and committed. CI green.**
+
+**The one open item is the `hybrid` ablation measurement.** L3 was
+switched to build.nvidia.com (`nvidia/nemotron-3.5-lightning-30b-a3b`,
+`docs/PLUMB_TRD.md` §7 deviation) because no Anthropic key was
+available. `NvidiaClient` drives the loop correctly on live exceptions,
+but the record run could not finish: build.nvidia.com's free tier
+throttled the tool loop to ~1 model turn/minute, and a held-out batch
+is ~450 turns. 6 cassettes are recorded + committed; the run resumes.
+`ABLATION.md` §4/§5 ships the honest unrun state. `docs/RUN_HYBRID.md`
+is one command sequence from a result on an unthrottled key.
 
 | piece | where |
 |---|---|

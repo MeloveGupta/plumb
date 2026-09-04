@@ -1,0 +1,17 @@
+{
+  "stop_reason": "tool_calls",
+  "text": "",
+  "tool_calls": [
+    {
+      "args": {
+        "date": "2026-07-21"
+      },
+      "id": "call-db81f157-f314-4d64-9d7d-7d150879a1ed",
+      "name": "fetch_settlement_recon"
+    }
+  ],
+  "usage": {
+    "input_tokens": 2962,
+    "output_tokens": 759
+  }
+}
