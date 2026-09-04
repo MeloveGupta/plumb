@@ -64,7 +64,9 @@ class AgentConfig(BaseModel):
     max_output_tokens: int = 4_096
     auto_resolve_threshold_paise: int = 10_000
     confidence_threshold_bps: int = 9_000
-    model: str = "claude-sonnet-5"
+    # TRD-DEVIATION: TRD §7.1's default is `claude-sonnet-5`. L3 runs
+    # against build.nvidia.com instead (see agent/model.py / ARCHITECTURE.md).
+    model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
     def sha256(self) -> str:
         """LLD §10's `PlumbConfig.sha256()` shape -- the manifest's

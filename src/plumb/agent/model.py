@@ -1,22 +1,36 @@
-"""TRD §7.1 -- the model client, a hand-rolled Anthropic Messages API
-tool loop with no framework between us and the thing we are measuring.
+"""TRD §7.1 -- the model client, a hand-rolled tool loop with no
+framework between us and the thing we are measuring.
 
 `ModelClient` is the seam. The loop (loop.py) talks only to this
-protocol. Four implementations:
-- `AnthropicClient` -- live path, needs ANTHROPIC_API_KEY, never in CI.
+protocol and builds Anthropic-shaped messages. Five implementations:
+- `NvidiaClient` -- live path. build.nvidia.com, OpenAI-compatible
+  chat/completions; translates the loop's Anthropic-shaped messages/
+  tools on the way out. Needs `NVIDIA_API_KEY`. Never in CI.
+- `AnthropicClient` -- the original live path, kept as the "swap back
+  with an Anthropic key" route (TRD §14). Needs `ANTHROPIC_API_KEY`.
 - `ScriptedClient` -- deterministic in-process double for loop tests.
 - `CassetteClient` -- replay from `fixtures/llm/` (TRD §9.1). What CI
   and `plumb run --ablation hybrid` (default) use. A miss is a
   CassetteMiss telling the maintainer to re-record.
-- `RecordingClient` -- wraps AnthropicClient, writes cassettes.
-  `plumb run --ablation hybrid --record`.
+- `RecordingClient` -- wraps a live client, writes cassettes; skips the
+  call when a cassette already exists (so `--record` resumes).
 CI runs with no API key and no network -- the loop tests use
 ScriptedClient, the cassette test uses a fake inner client, and any
 real hybrid replay uses committed fixtures.
 
+# TRD-DEVIATION: TRD §7.1 / LLD §7 specify the Anthropic Messages API,
+# default `claude-sonnet-5`. Built against build.nvidia.com
+# (`nvidia/nemotron-3.5-lightning-30b-a3b`, OpenAI-compatible) instead --
+# the Anthropic key was unavailable at build time; the NVIDIA one was.
+# Only the client changed: the loop, the gates, the tools, and the
+# structured `submit_resolution` output are all provider-neutral. See
+# ARCHITECTURE.md. `AnthropicClient` stays for the swap-back.
+
 `TEMPERATURE` is a constant, not an AgentConfig field -- L3 determinism
 is a finding to report, not a knob to turn (non-negotiable 8), and a
-`float` field would trip the no-float lint (see config.py's note).
+`float` field would trip the no-float lint (see config.py's note). No
+`seed` is passed even though NVIDIA NIM accepts one -- forcing
+bit-reproducibility would be engineering around the finding.
 """
 
 import hashlib
@@ -147,13 +161,105 @@ class RecordingClient:
     def call(
         self, system: str, messages: list[dict], tools: list[dict], cfg: AgentConfig
     ) -> ModelResponse:
+        key = _request_key(system, messages, tools, cfg.model)
+        path = self._dir / f"{key}.json"
+        if path.exists():  # resume: a cassette already recorded is not re-paid for
+            return _response_from_dict(json.loads(path.read_text()))
         response = self._inner.call(system, messages, tools, cfg)
         self._dir.mkdir(parents=True, exist_ok=True)
-        key = _request_key(system, messages, tools, cfg.model)
-        (self._dir / f"{key}.json").write_text(
-            json.dumps(_response_to_dict(response), indent=2, sort_keys=True) + "\n"
-        )
+        path.write_text(json.dumps(_response_to_dict(response), indent=2, sort_keys=True) + "\n")
         return response
+
+
+# --- Anthropic <-> OpenAI translation (the loop speaks Anthropic) --------------
+
+
+def _to_openai_tool(tool: dict) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": tool["input_schema"],
+        },
+    }
+
+
+def _to_openai_messages(messages: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, str):
+            out.append({"role": msg["role"], "content": content})
+            continue
+        # list content: either an assistant turn (text + tool_use) or a
+        # user turn carrying tool_result blocks.
+        if msg["role"] == "assistant":
+            text = "".join(b["text"] for b in content if b.get("type") == "text")
+            tool_calls = [
+                {
+                    "id": b["id"],
+                    "type": "function",
+                    "function": {"name": b["name"], "arguments": json.dumps(b["input"])},
+                }
+                for b in content
+                if b.get("type") == "tool_use"
+            ]
+            entry: dict = {"role": "assistant", "content": text or None}
+            if tool_calls:
+                entry["tool_calls"] = tool_calls
+            out.append(entry)
+        else:
+            for b in content:
+                if b.get("type") == "tool_result":
+                    out.append(
+                        {"role": "tool", "tool_call_id": b["tool_use_id"], "content": b["content"]}
+                    )
+    return out
+
+
+class NvidiaClient:
+    """Live path against build.nvidia.com's OpenAI-compatible
+    chat/completions. `openai` is imported lazily so this module stays
+    importable offline. Retries (429 / 5xx / connection) are the SDK's
+    own -- `max_retries`."""
+
+    def __init__(self, *, api_key: str | None = None, base_url: str = "https://integrate.api.nvidia.com/v1") -> None:
+        import openai
+
+        self._client = openai.OpenAI(
+            api_key=api_key or os.environ["NVIDIA_API_KEY"], base_url=base_url, max_retries=4
+        )
+
+    def call(
+        self, system: str, messages: list[dict], tools: list[dict], cfg: AgentConfig
+    ) -> ModelResponse:
+        raw = self._client.chat.completions.create(
+            model=cfg.model,
+            temperature=TEMPERATURE,
+            max_tokens=cfg.max_output_tokens,
+            messages=[{"role": "system", "content": system}, *_to_openai_messages(messages)],
+            tools=[_to_openai_tool(t) for t in tools],
+            tool_choice="auto",
+        )
+        choice = raw.choices[0]
+        message = choice.message
+        tool_calls: list[ToolCall] = []
+        for tc in message.tool_calls or []:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {"_raw": tc.function.arguments}  # malformed -> the loop degrades it
+            tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, args=args))
+        return ModelResponse(
+            stop_reason=choice.finish_reason or "stop",
+            text=message.content or "",  # nemotron's reasoning_content is deliberately dropped
+            tool_calls=tool_calls,
+            usage=Usage(
+                input_tokens=raw.usage.prompt_tokens if raw.usage else 0,
+                output_tokens=raw.usage.completion_tokens if raw.usage else 0,
+            ),
+        )
 
 
 class AnthropicClient:

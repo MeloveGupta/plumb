@@ -19,7 +19,7 @@ Violating any of these silently invalidates the submission. If a task seems to r
 5. **Exactly eight defect classes: D01–D08.** Depth, not breadth. Adding a ninth is descoping something else.
 6. **It is a "cash position", never a "forecast".** We compute settled / in-flight / held. We do not predict.
 7. **Deterministic paths use ordered structures, not `set`.** Python set iteration varies with hash randomisation. Use `list` + index, or `dict.fromkeys()`.
-8. **L3's determinism below 1.000 is a finding, not a bug.** The Anthropic API has no seed. Report it. The contrast with L1/L2's 1.000 *is* the architecture argument. Do not engineer around it.
+8. **L3's determinism below 1.000 is a finding, not a bug.** The hosted LLM (build.nvidia.com — see the deviation in `docs/PLUMB_TRD.md` §7) gives no bit-reproducibility guarantee at temperature 0, and no `seed` is passed even though the endpoint accepts one. Report the score. The contrast with L1/L2's 1.000 *is* the architecture argument. Do not engineer around it.
 9. **Read-and-recommend only.** No write-back, no ledger mutation, no posting. `run.sqlite` is append-only.
 10. **Tax constants live only in `rules/ratebook.py`**, each with statute, effective date, and source. Never inline a rate. Never "correct" a rate from a web search without checking §5.5 of the PRD first — several current-looking sources are stale.
 11. **Every metric carries `HELD_OUT` or `IN_SAMPLE`. Every match rate is printed with its tolerance profile.** A match rate without its band is not a number.

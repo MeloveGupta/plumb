@@ -20,7 +20,7 @@ def test_agent_config_defaults():
     assert cfg.reserve_tokens == 4_000
     assert cfg.auto_resolve_threshold_paise == 10_000
     assert cfg.confidence_threshold_bps == 9_000
-    assert cfg.model == "claude-sonnet-5"
+    assert cfg.model == "nvidia/nemotron-3.5-lightning-30b-a3b"
 
 
 def test_agent_config_rejects_unknown_key():

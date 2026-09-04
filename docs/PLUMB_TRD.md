@@ -231,9 +231,25 @@ Per PRD §5. Additional technical requirements:
 
 ## 7. L3 — the agent
 
+> **DEVIATION (3 Sep 2026).** This section specifies the Anthropic
+> Messages API with `claude-sonnet-5`. L3 was built and run against
+> **build.nvidia.com** (`nvidia/nemotron-3.5-lightning-30b-a3b`, an
+> OpenAI-compatible `chat/completions` endpoint) — the Anthropic key
+> was unavailable at build time, the NVIDIA one was. Only the model
+> client changed (`agent/model.py::NvidiaClient`, which translates the
+> loop's Anthropic-shaped messages/tools on the way out). The loop, the
+> gates, the seven tools, the structured `submit_resolution` output,
+> the cassette layer, and the determinism harness are all
+> provider-neutral and unchanged. `agent/model.py::AnthropicClient`
+> stays as the swap-back path. Env var is `NVIDIA_API_KEY`. See
+> `ARCHITECTURE.md`. Everything below reads as written with those
+> substitutions.
+
 ### 7.1 Hand-rolled tool loop, not a framework
 
-Use the Anthropic Messages API directly with an explicit tool-use loop.
+Use the model provider's API directly (Anthropic Messages, or an
+OpenAI-compatible `chat/completions` — see the deviation above) with an
+explicit tool-use loop.
 
 **Reasoning, to be stated in `ARCHITECTURE.md`:** the evidence chain, the abstention decision, and the per-call audit log *are the product*. A framework's control flow would sit between us and the thing we are measuring. This is a control decision, consistent with the read-only posture.
 
@@ -356,7 +372,8 @@ Non-negotiable — a panelist forking the repo must get a green build.
 
 Record LLM interactions as **cassettes** (request hash → response JSON) under `fixtures/llm/`. CI runs in replay mode. A cassette miss in CI fails with a clear message telling the maintainer to re-record locally.
 
-Live mode runs only locally, gated on `ANTHROPIC_API_KEY` being present.
+Live mode runs only locally, gated on `NVIDIA_API_KEY` being present
+(`ANTHROPIC_API_KEY` for the swap-back client) — see the §7 deviation.
 
 ### 9.2 Razorpay fixtures
 

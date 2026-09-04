@@ -13,6 +13,7 @@ dependencies = [
     "polars",
     "pyyaml",
     "anthropic>=1.2.0",
+    "openai>=3.7.0",
 ]
 
 [project.scripts]

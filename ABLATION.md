@@ -1,9 +1,11 @@
 # Ablation — does the LLM earn its place on the residual?
 
 **Status:** prediction committed 2 Sep 2026, before any `hybrid` run.
-`rules_only` measured 2 Sep. `hybrid` pending its own session (needs a
-live `ANTHROPIC_API_KEY`; this repo's CI runs the arm from recorded
-cassettes). See `docs/RUN_HYBRID.md` for the three commands.
+`rules_only` measured 2 Sep. `hybrid` run 3 Sep against
+`nvidia/nemotron-3.5-lightning-30b-a3b` (build.nvidia.com — see the L3
+model deviation in `docs/PLUMB_TRD.md` §7 / `ARCHITECTURE.md`). CI
+replays the recorded cassettes with no key. `docs/RUN_HYBRID.md` has
+the commands.
 
 ---
 
@@ -80,7 +82,7 @@ correctness measure.
 | Metric | `rules_only` | `hybrid` (predicted) |
 |---|---|---|
 | L1/L2 `determinism_score` | 1.000 (exact) | 1.000 (exact — L1/L2 unchanged) |
-| L3 `determinism_score` | n/a (no L3) | **< 1.000** — the Anthropic API has no seed. This is a finding, not a defect (non-negotiable 8); the contrast with L1/L2's exact 1.000 *is* the architecture argument. |
+| L3 `determinism_score` | n/a (no L3) | **< 1.000** — the hosted LLM gives no bit-reproducibility guarantee at temperature 0 and no `seed` is passed (non-negotiable 8). The contrast with L1/L2's exact 1.000 *is* the architecture argument. |
 | `residual_resolution_rate` | 0 (escalates everything) | materially > 0 — L3 resolves a real fraction of the residual |
 | `over_abstention_rate` | high — every resolvable exception escalated | **lower than `rules_only`** — the gate |
 | `correct_abstention_rate` | ~1.0 (escalates the unresolvable too) | ≈ `rules_only` — still escalates the in-flight cases |
@@ -186,8 +188,9 @@ substantive results are:
    fall? A drop from 0.341 to 0.30 is a different result from a drop to
    0.05.
 
-3. **L3 `determinism_score`.** Expected < 1.000 (the Anthropic API has
-   no seed). Reported as a finding, contrasted against L1/L2's exact
+3. **L3 `determinism_score`.** Expected < 1.000 — the hosted LLM gives
+   no bit-reproducibility guarantee at temperature 0 and we pass no
+   `seed`. Reported as a finding, contrasted against L1/L2's exact
    1.000 (§7). Not engineered around.
 
 Naming a soft gate as soft is a stronger submission than claiming a

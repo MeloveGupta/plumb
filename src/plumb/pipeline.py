@@ -80,15 +80,15 @@ def _plumb_version() -> str:
 
 
 def _make_client(model_mode: str) -> ModelClient:
-    from plumb.agent.model import AnthropicClient, CassetteClient, RecordingClient
+    from plumb.agent.model import CassetteClient, NvidiaClient, RecordingClient
 
     cassette_dir = Path("fixtures/llm")
     if model_mode == "replay":
         return CassetteClient(cassette_dir)
     if model_mode == "record":
-        return RecordingClient(AnthropicClient(), cassette_dir)
+        return RecordingClient(NvidiaClient(), cassette_dir)
     if model_mode == "live":
-        return AnthropicClient()
+        return NvidiaClient()
     raise ValueError(f"unknown model_mode {model_mode!r} -- one of replay, record, live")
 
 

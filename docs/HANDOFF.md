@@ -9,7 +9,9 @@ the committed code, not the conversation that produced them.
 
 **GATE P0/P1/P2 met. P3.1–P3.7 complete. Persistence bridge, cassettes,
 P4 close pack all built and committed.** The only open item is the
-`hybrid` ablation run, which needs a live `ANTHROPIC_API_KEY` — see §3.
+`hybrid` ablation run, which needs a live `NVIDIA_API_KEY` (L3 now runs
+against build.nvidia.com — `docs/PLUMB_TRD.md` §7 deviation) — see §3
+and `docs/RUN_HYBRID.md`.
 
 | piece | where |
 |---|---|

@@ -1,63 +1,77 @@
-# Running the hybrid ablation arm
+# Running / re-recording the hybrid ablation arm
 
-The `hybrid` arm makes live Anthropic API calls. It runs **locally,
-with a key** — CI and everyone else replay the cassettes this produces
-(TRD §9.1). Everything else — the persistence bridge, the scorer, the
-`rules_only` baseline, the cassette replay layer, the determinism
-harness — is already built and committed.
+L3 runs against **build.nvidia.com** —
+`nvidia/nemotron-3.5-lightning-30b-a3b`, an OpenAI-compatible
+`chat/completions` endpoint (see the deviation in `docs/PLUMB_TRD.md`
+§7). The `--record` step makes live calls and needs a key; everyone
+else replays the committed cassettes with no key.
 
 ## Prerequisites
 
-- `ANTHROPIC_API_KEY` in the environment.
-- `uv sync` done, on a **clean git tree** (a dirty tree stamps the run
-  `PROVISIONAL` and it can't be a headline number).
-- The held-out batch:
+- `NVIDIA_API_KEY` in the environment, on an account entitled to run
+  that model (`curl` it first — many build.nvidia.com keys 404 with
+  "not entitled for account").
+- Clean git tree (a dirty tree stamps the run `PROVISIONAL`).
+- The held-out batch (regenerable, gitignored):
 
 ```
 plumb-gen --seed 42 --config configs/config_b.yaml --out data/batch_main_200 --tier T2
 ```
 
-`data/` is gitignored and regenerable from the seed; don't commit it.
-
-## The three commands
+## The sequence
 
 ```
-# 1. Record cassettes + run the hybrid arm (HELD_OUT)
-ANTHROPIC_API_KEY=... plumb run \
-  --data data/batch_main_200 --ablation hybrid --model-mode record \
+# 1. Record the cassettes (live calls). Resumable -- re-run on a
+#    rate-limit / credit / timeout stall; existing cassettes aren't re-paid.
+NVIDIA_API_KEY=... plumb run --data data/batch_main_200 --ablation hybrid \
+  --model-mode record --sample-label HELD_OUT --seed 42 \
+  --generator-config configs/config_b.yaml
+
+git add -f fixtures/llm/ && git commit -m "record hybrid cassettes"
+
+# 2. The headline hybrid run -- replay, clean tree, not provisional
+plumb run --data data/batch_main_200 --ablation hybrid --model-mode replay \
   --sample-label HELD_OUT --seed 42 --generator-config configs/config_b.yaml
 
-# 2. 5-run L3 determinism (PRD §7.9). Replays the step-1 cassettes,
-#    so it needs no key and is fast. Writes determinism.json.
-plumb run \
-  --data data/batch_main_200 --ablation hybrid --repeat 5 \
+# 3. L3 determinism across 5 runs (replay -- free, no key). Writes determinism.json.
+plumb run --data data/batch_main_200 --ablation hybrid --repeat 5 \
   --sample-label HELD_OUT --seed 42 --generator-config configs/config_b.yaml
 
-# 3. Score the step-1 run
-plumb-eval --run reports/<hybrid_run_id_from_step_1> --truth data/batch_main_200/truth
+# 4. Score the step-2 run
+plumb-eval --run reports/<headline_run_id> --truth data/batch_main_200/truth
 ```
 
-Expected: `determinism_score` **< 1.000** (the Anthropic API has no
-seed — a finding, not a defect; non-negotiable 8).
+Expected: L3 `determinism_score` **< 1.000** — the endpoint gives no
+bit-reproducibility guarantee at temperature 0 and we pass no `seed`
+(non-negotiable 8). Whatever it comes out as is the finding.
 
-## Then
+## The guardrail check (do this before writing anything up)
 
-1. `git add -f fixtures/llm/ reports/<hybrid_run_id>/` and commit.
-2. Fill `ABLATION.md` §4's `hybrid` row from
-   `reports/<hybrid_run_id>/metrics.json` — at least:
-   `over_abstention_rate`, `correct_abstention_rate`, `silent_error_rate`,
-   `false_alarm_inr`, `residual_resolution_rate`,
-   `escalated_unresolved_rate`, the outcome counts, and the L3
-   `determinism_score` from `determinism.json`.
-3. Evaluate the GATE P3 criterion (`ABLATION.md` §2) and the guardrails
-   (§6):
-   - **PASS** iff `over_abstention_rate(hybrid) < 0.341` **and**
-     `correct_abstention_rate(hybrid) == 1.000` **and**
-     `silent_error_rate(hybrid) <= 0.194` **and**
-     `false_alarm_inr(hybrid) == 0`.
-   - Read §6 first — the gate is soft; the guardrails and the magnitude
-     are the substantive result.
-4. Write `ABLATION.md` §5 the verdict. If it doesn't pass, ship the
-   honest negative per `IMPLEMENTATION_PLAN.md` §5 — **do not tune
-   toward a pass**, `config_b` is held out.
-5. Confirm CI green (it now replays the committed cassettes).
+From `reports/<headline>/metrics.json`:
+
+- `correct_abstention_rate` must be **exactly 1.000** — hybrid must not
+  auto-resolve any of the ~15 % genuinely-in-flight settlements.
+- `silent_error_rate` must be **≤ 0.194** (the rules_only baseline).
+- `false_alarm_inr` must be **0**.
+
+**If any of those breaks, that is a real finding — report the raw
+numbers and stop. Do not interpret or write it up.**
+
+## If the guardrails hold
+
+Fill `ABLATION.md` §4's `hybrid` row from `metrics.json` +
+`determinism.json`, evaluate the gate (§2), write §5 the verdict and
+§6/§7 per the actual determinism. Read §6 first — the
+`over_abstention_rate` gate is soft; the guardrails and the magnitude
+are the substantive result. If the gate isn't cleared, ship the honest
+negative (`IMPLEMENTATION_PLAN.md` §5) — do not tune, `config_b` is
+held out.
+
+`git add -f reports/<headline>/ fixtures/llm/` and commit `ABLATION.md`
++ the run dir. Confirm CI green (replay).
+
+## Swapping back to Anthropic
+
+Set `ANTHROPIC_API_KEY`, change `AgentConfig.model` to `claude-sonnet-5`,
+point `pipeline._make_client` at `AnthropicClient` (kept for exactly
+this), re-record. Nothing else changes.
